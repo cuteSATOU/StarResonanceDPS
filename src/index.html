@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>星痕共鸣 DPS 统计工具</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- 顶部导航栏 -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <div class="brand-icon">⚡</div>
+                <div class="brand-text">
+                    <h1>星痕共鸣 DPS</h1>
+                    <span class="brand-subtitle">实时伤害统计分析工具</span>
+                </div>
+            </div>
+            
+            <div class="navbar-center">
+                <div class="status-card" id="statusCard">
+                    <div class="status-indicator" id="statusIndicator">
+                        <div class="status-dot"></div>
+                        <span class="status-text">待连接</span>
+                    </div>
+                    <div class="status-info">
+                        <div class="status-detail">
+                            <span class="label">设备</span>
+                            <span class="value" id="currentDevice">未选择</span>
+                        </div>
+                        <div class="status-detail">
+                            <span class="label">玩家</span>
+                            <span class="value" id="playerUid">未检测</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="window-controls">
+                <button class="window-control-btn minimize-btn" id="minimizeBtn" title="最小化">
+                    <span>–</span>
+                </button>
+                <button class="window-control-btn maximize-btn" id="maximizeBtn" title="最大化">
+                    <span>□</span>
+                </button>
+                <button class="window-control-btn close-btn" id="closeBtn" title="关闭">
+                    <span>✕</span>
+                </button>
+            </div>
+        </nav>
+
+        <!-- 主要内容区域 -->
+        <main class="main-container">
+            <!-- 控制面板 -->
+            <section class="control-section">
+                <div class="control-card">
+                    <div class="card-header">
+                        <h3>连接控制</h3>
+                    </div>
+                    <div class="card-content">
+                        <div class="control-row">
+                            <div class="control-group">
+                                <label for="deviceSelect" class="control-label">
+                                    <span class="label-icon">🔗</span>
+                                    网络设备
+                                </label>
+                                <select id="deviceSelect" class="device-select" disabled>
+                                    <option value="">正在加载设备...</option>
+                                </select>
+                            </div>
+                            <div class="control-actions">
+                                <button id="refreshDeviceBtn" class="btn btn-outline btn-sm" title="刷新设备列表">
+                                    <span class="btn-icon">🔄</span>
+                                    刷新
+                                </button>
+                                <button id="startCaptureBtn" class="btn btn-success" disabled>
+                                    <span class="btn-icon">▶️</span>
+                                    开始抓包
+                                </button>
+                                <button id="stopCaptureBtn" class="btn btn-danger" disabled>
+                                    <span class="btn-icon">⏹️</span>
+                                    停止抓包
+                                </button>
+                                <button id="clearStatsBtn" class="btn btn-warning">
+                                    <span class="btn-icon">🗑️</span>
+                                    清除数据
+                                </button>
+                                <button id="showLogBtn" class="btn btn-outline">
+                                    <span class="btn-icon">📝</span>
+                                    日志窗口
+                                </button>
+                                <button id="toggleOverlayBtn" class="btn btn-outline">
+                                    <span class="btn-icon">📱</span>
+                                    <span class="btn-text">悬浮窗</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 数据展示区域 -->
+            <section class="data-section">
+                <!-- 空状态 -->
+                <div class="empty-state" id="noDataMessage">
+                    <div class="empty-icon">
+                        <div class="pulse-ring"></div>
+                        <div class="pulse-icon">📊</div>
+                    </div>
+                    <h3>等待数据中...</h3>
+                    <p>请选择网络设备并开始数据捕获</p>
+                    <div class="empty-actions">
+                        <button class="btn btn-primary" onclick="document.getElementById('refreshDeviceBtn').click()">
+                            刷新设备列表
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 统计数据容器 -->
+                <div class="stats-container" id="statsContainer" style="display: none;">
+                    <!-- 概览仪表板 -->
+                    <div class="dashboard">
+                        <div class="metric-card primary">
+                            <div class="metric-header">
+                                <div class="metric-icon">⚡</div>
+                                <div class="metric-info">
+                                    <h4>实时 DPS</h4>
+                                    <span class="metric-subtitle">当前每秒伤害</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalRealtimeDps">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card danger">
+                            <div class="metric-header">
+                                <div class="metric-icon">🔥</div>
+                                <div class="metric-info">
+                                    <h4>峰值 DPS</h4>
+                                    <span class="metric-subtitle">历史最高</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalMaxDps">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card success">
+                            <div class="metric-header">
+                                <div class="metric-icon">📈</div>
+                                <div class="metric-info">
+                                    <h4>平均 DPS</h4>
+                                    <span class="metric-subtitle">总体平均</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalAvgDps">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card warning">
+                            <div class="metric-header">
+                                <div class="metric-icon">💥</div>
+                                <div class="metric-info">
+                                    <h4>总伤害</h4>
+                                    <span class="metric-subtitle">累计造成</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalDamage">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 详细数据表格 -->
+                    <div class="data-table-container">
+                        <div class="table-header">
+                            <h3>详细统计</h3>
+                            <div class="table-controls">
+                                <button class="btn btn-sm btn-outline" id="exportBtn">
+                                    <span class="btn-icon">📤</span>
+                                    导出数据
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="table-wrapper">
+                            <table class="data-table" id="statsTable">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" data-sort="uid">
+                                            <span>玩家 UID</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="realtime">
+                                            <span>实时 DPS</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="max">
+                                            <span>峰值 DPS</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="avg">
+                                            <span>平均 DPS</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="total">
+                                            <span>总伤害</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th>普通</th>
+                                        <th>暴击</th>
+                                        <th>幸运</th>
+                                        <th>暴击幸运</th>
+                                        <th>次数</th>
+                                        <th class="sortable" data-sort="crit-rate">
+                                            <span>暴击率</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- 动态填充数据 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

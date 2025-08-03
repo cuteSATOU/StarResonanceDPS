@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>选择网络设备</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* 设备选择器特定样式 */
+        .device-selector {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: var(--bg-secondary);
+            font-family: 'Inter', sans-serif;
+        }
+
+        .selector-header {
+            background: var(--bg-primary);
+            padding: var(--space-xl);
+            border-bottom: 1px solid var(--gray-200);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .selector-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-md);
+            margin-bottom: var(--space-md);
+        }
+
+        .selector-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary-color), var(--info-color));
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
+        }
+
+        .selector-title h2 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .selector-subtitle {
+            color: var(--text-muted);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .selector-content {
+            flex: 1;
+            padding: var(--space-xl);
+            overflow-y: auto;
+        }
+
+        .device-list {
+            background: var(--bg-primary);
+            border-radius: var(--radius-xl);
+            border: 1px solid var(--gray-200);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            margin-bottom: var(--space-xl);
+        }
+
+        .device-list-header {
+            padding: var(--space-lg) var(--space-xl);
+            background: var(--gray-50);
+            border-bottom: 1px solid var(--gray-200);
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .loading-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: var(--space-2xl);
+            text-align: center;
+            gap: var(--space-lg);
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--gray-200);
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .loading-text {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .device-item {
+            display: flex;
+            align-items: center;
+            padding: var(--space-lg) var(--space-xl);
+            border-bottom: 1px solid var(--gray-100);
+            cursor: pointer;
+            transition: all var(--transition-fast);
+            position: relative;
+        }
+
+        .device-item:last-child {
+            border-bottom: none;
+        }
+
+        .device-item:hover {
+            background: var(--gray-50);
+        }
+
+        .device-item.selected {
+            background: var(--primary-light);
+            border-left: 4px solid var(--primary-color);
+        }
+
+        .device-item.selected::before {
+            content: '';
+            position: absolute;
+            right: var(--space-lg);
+            top: 50%;
+            transform: translateY(-50%);
+            width: 20px;
+            height: 20px;
+            background: var(--primary-color);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .device-item.selected::after {
+            content: '✓';
+            position: absolute;
+            right: calc(var(--space-lg) + 6px);
+            top: 50%;
+            transform: translateY(-50%);
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .device-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .device-name {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: var(--space-xs);
+            word-wrap: break-word;
+        }
+
+        .device-details {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'Monaco', 'Menlo', monospace;
+            word-wrap: break-word;
+        }
+
+        .device-radio {
+            margin-right: var(--space-md);
+        }
+
+        .device-radio input[type="radio"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--primary-color);
+            cursor: pointer;
+        }
+
+        .error-state {
+            text-align: center;
+            padding: var(--space-2xl);
+            color: var(--danger-color);
+        }
+
+        .error-icon {
+            font-size: 48px;
+            margin-bottom: var(--space-lg);
+            opacity: 0.6;
+        }
+
+        .error-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: var(--space-sm);
+        }
+
+        .error-message {
+            font-size: 14px;
+            margin-bottom: var(--space-lg);
+            line-height: 1.5;
+        }
+
+        .selector-footer {
+            padding: var(--space-xl);
+            background: var(--bg-primary);
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--space-md);
+        }
+
+        .footer-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        .footer-actions {
+            display: flex;
+            gap: var(--space-sm);
+        }
+
+        .help-section {
+            background: var(--info-light);
+            border: 1px solid var(--info-color);
+            border-radius: var(--radius-lg);
+            padding: var(--space-lg);
+        }
+
+        .help-title {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            margin-bottom: var(--space-md);
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--info-color);
+        }
+
+        .help-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .help-list li {
+            position: relative;
+            padding-left: var(--space-lg);
+            margin-bottom: var(--space-sm);
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.4;
+        }
+
+        .help-list li::before {
+            content: '•';
+            position: absolute;
+            left: 0;
+            color: var(--info-color);
+            font-weight: 600;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="device-selector">
+        <!-- 头部 -->
+        <div class="selector-header">
+            <div class="selector-title">
+                <div class="selector-icon">🔗</div>
+                <h2>选择网络设备</h2>
+            </div>
+            <p class="selector-subtitle">
+                请选择用于数据包捕获的网络设备。通常选择当前正在使用的网络适配器。
+            </p>
+        </div>
+
+        <!-- 内容区域 -->
+        <div class="selector-content">
+            <div class="device-list">
+                <div class="device-list-header">
+                    可用的网络设备
+                </div>
+                <div id="deviceList">
+                    <div class="loading-state">
+                        <div class="loading-spinner"></div>
+                        <div class="loading-text">正在扫描网络设备...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 帮助信息 -->
+            <div class="help-section">
+                <div class="help-title">
+                    <span>💡</span>
+                    使用说明
+                </div>
+                <ul class="help-list">
+                    <li>选择包含游戏网络流量的网络设备</li>
+                    <li>通常选择当前正在使用的网络适配器（有线或无线）</li>
+                    <li>如果不确定，可以尝试不同的设备直到捕获到数据</li>
+                    <li>确保程序以管理员权限运行</li>
+                    <li>选择后将自动开始数据包捕获</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 底部操作区 -->
+        <div class="selector-footer">
+            <div class="footer-info">
+                💡 提示：选择设备后将自动开始数据捕获
+            </div>
+            <div class="footer-actions">
+                <button id="cancelBtn" class="btn btn-outline">
+                    <span class="btn-icon">✕</span>
+                    取消
+                </button>
+                <button id="confirmBtn" class="btn btn-primary" disabled>
+                    <span class="btn-icon">✓</span>
+                    确认选择
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        let selectedDeviceIndex = -1;
+        let devices = [];
+
+        // 加载设备列表
+        async function loadDevices() {
+            try {
+                devices = await ipcRenderer.invoke('get-devices');
+                displayDevices(devices);
+            } catch (error) {
+                console.error('获取设备列表失败:', error);
+                showError('获取设备列表失败', error.message);
+            }
+        }
+
+        // 显示设备列表
+        function displayDevices(devices) {
+            const deviceList = document.getElementById('deviceList');
+            
+            if (devices.length === 0) {
+                showError('未找到可用设备', '请检查网络连接和权限设置');
+                return;
+            }
+
+            const deviceItems = devices.map(device => `
+                <div class="device-item" data-index="${device.index}">
+                    <div class="device-radio">
+                        <input type="radio" name="device" value="${device.index}" id="device_${device.index}">
+                    </div>
+                    <div class="device-info">
+                        <div class="device-name">${escapeHtml(device.description)}</div>
+                        <div class="device-details">${escapeHtml(device.name)}</div>
+                    </div>
+                </div>
+            `).join('');
+
+            deviceList.innerHTML = deviceItems;
+
+            // 添加点击事件
+            document.querySelectorAll('.device-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const index = parseInt(item.dataset.index);
+                    selectDevice(index);
+                });
+            });
+
+            // 添加单选框事件
+            document.querySelectorAll('input[name="device"]').forEach(radio => {
+                radio.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectDevice(parseInt(e.target.value));
+                    }
+                });
+            });
+        }
+
+        // 显示错误状态
+        function showError(title, message) {
+            const deviceList = document.getElementById('deviceList');
+            deviceList.innerHTML = `
+                <div class="error-state">
+                    <div class="error-icon">⚠️</div>
+                    <div class="error-title">${escapeHtml(title)}</div>
+                    <div class="error-message">${escapeHtml(message)}</div>
+                    <button class="btn btn-primary" onclick="loadDevices()">
+                        <span class="btn-icon">🔄</span>
+                        重新扫描
+                    </button>
+                </div>
+            `;
+        }
+
+        // 选择设备
+        function selectDevice(index) {
+            selectedDeviceIndex = index;
+            
+            // 更新UI
+            document.querySelectorAll('.device-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            const selectedItem = document.querySelector(`[data-index="${index}"]`);
+            if (selectedItem) {
+                selectedItem.classList.add('selected');
+                document.querySelector(`#device_${index}`).checked = true;
+                document.getElementById('confirmBtn').disabled = false;
+            }
+        }
+
+        // HTML转义函数
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        // 事件监听
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+            window.close();
+        });
+
+        document.getElementById('confirmBtn').addEventListener('click', async () => {
+            if (selectedDeviceIndex >= 0) {
+                const confirmBtn = document.getElementById('confirmBtn');
+                const originalText = confirmBtn.innerHTML;
+                
+                // 显示加载状态
+                confirmBtn.innerHTML = `
+                    <div style="width: 16px; height: 16px; border: 2px solid transparent; border-top: 2px solid currentColor; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                    连接中...
+                `;
+                confirmBtn.disabled = true;
+                
+                try {
+                    const success = await ipcRenderer.invoke('start-capture', selectedDeviceIndex);
+                    if (success) {
+                        window.close();
+                    } else {
+                        throw new Error('启动抓包失败，请检查设备和权限');
+                    }
+                } catch (error) {
+                    alert('启动抓包失败: ' + error.message);
+                    confirmBtn.innerHTML = originalText;
+                    confirmBtn.disabled = false;
+                }
+            }
+        });
+
+        // 页面加载完成后获取设备列表
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDevices();
+            
+            // 添加键盘支持
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    window.close();
+                } else if (e.key === 'Enter' && selectedDeviceIndex >= 0) {
+                    document.getElementById('confirmBtn').click();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

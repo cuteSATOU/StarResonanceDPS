@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DPS悬浮窗</title>
+    <link rel="stylesheet" href="overlay-window.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="overlay-container">
+        <!-- 悬浮窗头部（可拖拽） -->
+        <div class="overlay-header" id="overlayHeader">
+            <div class="overlay-title">
+                <span class="overlay-icon">⚡</span>
+                <span class="title-text">DPS监控</span>
+            </div>
+            <div class="overlay-controls">
+                <button class="overlay-control-btn pin-btn" id="pinBtn" title="切换置顶">
+                    <span>📌</span>
+                </button>
+                <button class="overlay-control-btn settings-btn" id="settingsBtn" title="设置">
+                    <span>⚙️</span>
+                </button>
+                <button class="overlay-control-btn minimize-btn" id="minimizeBtn" title="最小化">
+                    <span>–</span>
+                </button>
+                <button class="overlay-control-btn close-btn" id="closeBtn" title="关闭">
+                    <span>✕</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- DPS数据显示区域 -->
+        <div class="overlay-content">
+            <!-- 主要DPS指标 -->
+            <div class="dps-main">
+                <div class="dps-item primary">
+                    <div class="dps-label">实时DPS</div>
+                    <div class="dps-value" id="realtimeDps">0</div>
+                    <div class="dps-bar">
+                        <div class="dps-bar-fill" id="realtimeDpsBar"></div>
+                    </div>
+                </div>
+                
+                <div class="dps-item secondary">
+                    <div class="dps-label">峰值DPS</div>
+                    <div class="dps-value" id="maxDps">0</div>
+                    <div class="dps-bar">
+                        <div class="dps-bar-fill max" id="maxDpsBar"></div>
+                    </div>
+                </div>
+                
+                <div class="dps-item tertiary">
+                    <div class="dps-label">平均DPS</div>
+                    <div class="dps-value" id="avgDps">0</div>
+                    <div class="dps-bar">
+                        <div class="dps-bar-fill avg" id="avgDpsBar"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 详细统计（可折叠） -->
+            <div class="dps-details" id="dpsDetails">
+                <div class="details-header" id="detailsToggle">
+                    <span class="details-title">详细统计</span>
+                    <span class="details-arrow">▼</span>
+                </div>
+                <div class="details-content" id="detailsContent">
+                    <div class="detail-row">
+                        <span class="detail-label">总伤害</span>
+                        <span class="detail-value" id="totalDamage">0</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">暴击率</span>
+                        <span class="detail-value" id="critRate">0%</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">攻击次数</span>
+                        <span class="detail-value" id="attackCount">0</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">玩家UID</span>
+                        <span class="detail-value" id="playerUid">未检测</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置面板（隐藏） -->
+        <div class="overlay-settings" id="overlaySettings" style="display: none;">
+            <div class="settings-header">
+                <h4>悬浮窗设置</h4>
+                <button class="close-settings-btn" id="closeSettingsBtn">✕</button>
+            </div>
+            <div class="settings-content">
+                <div class="setting-item">
+                    <label>透明度</label>
+                    <input type="range" id="opacitySlider" min="30" max="100" value="90" step="10">
+                    <span id="opacityValue">90%</span>
+                </div>
+                <div class="setting-item">
+                    <label>更新频率</label>
+                    <select id="updateFrequency">
+                        <option value="100">100ms (流畅)</option>
+                        <option value="250" selected>250ms (平衡)</option>
+                        <option value="500">500ms (节能)</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="showDetailsDefault" checked>
+                        <span class="checkbox-custom"></span>
+                        默认显示详细统计
+                    </label>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        let statsData = {};
+        let detailsExpanded = true;
+        let updateInterval = null;
+        let updateFreency = 500; // 默认降低更新频率以节省性能
+        let opacity = 90;
+        let isPinned = true;
+
+        // DOM元素
+        let realtimeDps, maxDps, avgDps, totalDamage, critRate, attackCount, playerUid;
+        let realtimeDpsBar, maxDpsBar, avgDpsBar;
+        let pinBtn, settingsBtn, minimizeBtn, closeBtn, detailsToggle, detailsContent;
+        let overlaySettings, closeSettingsBtn, opacitySlider, opacityValue, updateFrequencySelect;
+        let showDetailsDefaultCheckbox;
+
+        // 初始化
+        function initializeOverlay() {
+            // 获取DOM元素
+            realtimeDps = document.getElementById('realtimeDps');
+            maxDps = document.getElementById('maxDps');
+            avgDps = document.getElementById('avgDps');
+            totalDamage = document.getElementById('totalDamage');
+            critRate = document.getElementById('critRate');
+            attackCount = document.getElementById('attackCount');
+            playerUid = document.getElementById('playerUid');
+            
+            // 调试：检查DOM元素是否正确获取
+            console.log('悬浮窗DOM元素初始化:', {
+                playerUid: playerUid,
+                playerUidExists: !!playerUid
+            });
+            
+            realtimeDpsBar = document.getElementById('realtimeDpsBar');
+            maxDpsBar = document.getElementById('maxDpsBar');
+            avgDpsBar = document.getElementById('avgDpsBar');
+            
+            pinBtn = document.getElementById('pinBtn');
+            settingsBtn = document.getElementById('settingsBtn');
+            minimizeBtn = document.getElementById('minimizeBtn');
+            closeBtn = document.getElementById('closeBtn');
+            detailsToggle = document.getElementById('detailsToggle');
+            detailsContent = document.getElementById('detailsContent');
+            
+            overlaySettings = document.getElementById('overlaySettings');
+            closeSettingsBtn = document.getElementById('closeSettingsBtn');
+            opacitySlider = document.getElementById('opacitySlider');
+            opacityValue = document.getElementById('opacityValue');
+            updateFrequencySelect = document.getElementById('updateFrequency');
+            showDetailsDefaultCheckbox = document.getElementById('showDetailsDefault');
+
+            bindEvents();
+            loadSettings();
+            updatePinButton();
+            
+            // 确保详细统计默认展开
+            if (detailsContent) {
+                detailsContent.style.display = detailsExpanded ? 'block' : 'none';
+                const arrow = document.querySelector('.details-arrow');
+                if (arrow) {
+                    arrow.textContent = detailsExpanded ? '▼' : '▶';
+                }
+                console.log('详细统计展开状态:', detailsExpanded);
+            }
+            
+            startDataUpdate();
+        }
+
+        // 绑定事件
+        function bindEvents() {
+            // 置顶按钮
+            pinBtn.addEventListener('click', () => {
+                isPinned = !isPinned;
+                ipcRenderer.invoke('overlay-set-always-on-top', isPinned);
+                updatePinButton();
+            });
+
+            // 控制按钮
+            settingsBtn.addEventListener('click', () => {
+                overlaySettings.style.display = overlaySettings.style.display === 'none' ? 'block' : 'none';
+            });
+
+            minimizeBtn.addEventListener('click', () => {
+                ipcRenderer.invoke('overlay-minimize');
+            });
+
+            closeBtn.addEventListener('click', () => {
+                ipcRenderer.invoke('overlay-close');
+            });
+
+            // 详细统计折叠
+            detailsToggle.addEventListener('click', () => {
+                detailsExpanded = !detailsExpanded;
+                detailsContent.style.display = detailsExpanded ? 'block' : 'none';
+                document.querySelector('.details-arrow').textContent = detailsExpanded ? '▼' : '▶';
+            });
+
+            // 设置面板
+            closeSettingsBtn.addEventListener('click', () => {
+                overlaySettings.style.display = 'none';
+            });
+
+            // 透明度设置
+            opacitySlider.addEventListener('input', (e) => {
+                opacity = parseInt(e.target.value);
+                opacityValue.textContent = opacity + '%';
+                document.body.style.opacity = opacity / 100;
+                saveSettings();
+            });
+
+            // 更新频率设置
+            updateFrequencySelect.addEventListener('change', (e) => {
+                updateFreency = parseInt(e.target.value);
+                restartDataUpdate();
+                saveSettings();
+            });
+
+            // 默认显示详细统计
+            showDetailsDefaultCheckbox.addEventListener('change', (e) => {
+                detailsExpanded = e.target.checked;
+                detailsContent.style.display = detailsExpanded ? 'block' : 'none';
+                document.querySelector('.details-arrow').textContent = detailsExpanded ? '▼' : '▶';
+                saveSettings();
+            });
+
+
+
+            // 接收数据更新
+            ipcRenderer.on('stats-updated', (event, data) => {
+                statsData = data;
+                updateDpsDisplay();
+            });
+
+            // 接收玩家UID更新
+            ipcRenderer.on('player-uid-updated', (event, uid) => {
+                console.log('悬浮窗收到UID更新事件:', {
+                    uid: uid,
+                    playerUidElement: playerUid,
+                    playerUidExists: !!playerUid
+                });
+                
+                if (playerUid) {
+                    playerUid.textContent = uid || '未检测';
+                    console.log('UID已更新到悬浮窗，当前显示:', playerUid.textContent);
+                } else {
+                    console.error('playerUid DOM元素不存在！');
+                }
+            });
+        }
+
+        // 开始数据更新
+        function startDataUpdate() {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+            }
+            updateInterval = setInterval(() => {
+                ipcRenderer.invoke('get-stats-data').then(data => {
+                    if (data) {
+                        statsData = data;
+                        updateDpsDisplay();
+                    }
+                });
+            }, updateFreency);
+
+            // 获取当前玩家UID
+            console.log('悬浮窗开始获取当前UID...');
+            ipcRenderer.invoke('get-player-uid').then(uid => {
+                console.log('悬浮窗get-player-uid响应:', {
+                    uid: uid,
+                    hasUid: !!uid,
+                    playerUidElement: playerUid,
+                    playerUidExists: !!playerUid
+                });
+                
+                if (uid && playerUid) {
+                    playerUid.textContent = uid;
+                    console.log('悬浮窗主动获取UID成功，设置为:', uid);
+                } else if (!uid) {
+                    console.log('当前没有玩家UID数据');
+                } else if (!playerUid) {
+                    console.error('playerUid DOM元素不存在！');
+                }
+            }).catch(err => {
+                console.error('获取玩家UID失败:', err);
+            });
+        }
+
+        // 重启数据更新
+        function restartDataUpdate() {
+            startDataUpdate();
+        }
+
+        // 更新DPS显示
+        function updateDpsDisplay() {
+            const userIds = Object.keys(statsData);
+            
+            if (userIds.length === 0) {
+                // 无数据时显示0
+                realtimeDps.textContent = '0';
+                maxDps.textContent = '0';
+                avgDps.textContent = '0';
+                totalDamage.textContent = '0';
+                critRate.textContent = '0%';
+                attackCount.textContent = '0';
+                updateProgressBars(0, 0, 0);
+                return;
+            }
+
+            // 计算总体数据
+            let totalRealtimeDpsValue = 0;
+            let totalMaxDpsValue = 0;
+            let totalAvgDpsValue = 0;
+            let totalDamageValue = 0;
+            let totalCritCount = 0;
+            let totalAttackCount = 0;
+
+            for (const uid of userIds) {
+                const userData = statsData[uid];
+                totalRealtimeDpsValue += userData.realtime_dps || 0;
+                totalMaxDpsValue = Math.max(totalMaxDpsValue, userData.realtime_dps_max || 0);
+                totalAvgDpsValue += userData.total_dps || 0;
+                totalDamageValue += userData.total_damage.total || 0;
+                totalCritCount += userData.total_count.critical || 0;
+                totalAttackCount += userData.total_count.total || 0;
+            }
+
+            if (userIds.length > 0) {
+                totalAvgDpsValue = totalAvgDpsValue / userIds.length;
+            }
+
+            const critRateValue = totalAttackCount > 0 ? (totalCritCount / totalAttackCount) : 0;
+
+            // 更新显示
+            realtimeDps.textContent = formatNumber(totalRealtimeDpsValue);
+            maxDps.textContent = formatNumber(totalMaxDpsValue);
+            avgDps.textContent = formatNumber(totalAvgDpsValue);
+            totalDamage.textContent = formatNumber(totalDamageValue);
+            critRate.textContent = (critRateValue * 100).toFixed(1) + '%';
+            attackCount.textContent = totalAttackCount.toString();
+
+            // 更新进度条
+            updateProgressBars(totalRealtimeDpsValue, totalMaxDpsValue, totalAvgDpsValue);
+        }
+
+        // 更新进度条
+        function updateProgressBars(realtime, max, avg) {
+            const maxValue = Math.max(realtime, max, avg) || 1;
+            
+            const realtimePercent = (realtime / maxValue) * 100;
+            const maxPercent = (max / maxValue) * 100;
+            const avgPercent = (avg / maxValue) * 100;
+            
+            realtimeDpsBar.style.width = `${Math.min(realtimePercent, 100)}%`;
+            maxDpsBar.style.width = `${Math.min(maxPercent, 100)}%`;
+            avgDpsBar.style.width = `${Math.min(avgPercent, 100)}%`;
+        }
+
+        // 格式化数字
+        function formatNumber(num) {
+            if (typeof num !== 'number' || isNaN(num)) return '0';
+            
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(1) + 'M';
+            } else if (num >= 1000) {
+                return (num / 1000).toFixed(1) + 'K';
+            } else {
+                return Math.floor(num).toString();
+            }
+        }
+
+        // 更新置顶按钮状态
+        function updatePinButton() {
+            if (pinBtn) {
+                const pinIcon = pinBtn.querySelector('span');
+                if (isPinned) {
+                    pinIcon.textContent = '📌';
+                    pinBtn.style.background = 'rgba(255, 255, 255, 0.3)';
+                    pinBtn.title = '点击取消置顶';
+                } else {
+                    pinIcon.textContent = '📍';
+                    pinBtn.style.background = 'rgba(255, 255, 255, 0.1)';
+                    pinBtn.title = '点击置顶显示';
+                }
+            }
+        }
+
+        // 保存设置
+        function saveSettings() {
+            const settings = {
+                opacity,
+                updateFreency,
+                detailsExpanded,
+                isPinned
+            };
+            localStorage.setItem('overlaySettings', JSON.stringify(settings));
+        }
+
+        // 加载设置
+        function loadSettings() {
+            try {
+                const settings = JSON.parse(localStorage.getItem('overlaySettings') || '{}');
+                
+                if (settings.opacity !== undefined) {
+                    opacity = settings.opacity;
+                    opacitySlider.value = opacity;
+                    opacityValue.textContent = opacity + '%';
+                    document.body.style.opacity = opacity / 100;
+                }
+                
+                if (settings.updateFreency !== undefined) {
+                    updateFreency = settings.updateFreency;
+                    updateFrequencySelect.value = updateFreency;
+                }
+                
+                if (settings.detailsExpanded !== undefined) {
+                    detailsExpanded = settings.detailsExpanded;
+                    showDetailsDefaultCheckbox.checked = detailsExpanded;
+                    detailsContent.style.display = detailsExpanded ? 'block' : 'none';
+                    document.querySelector('.details-arrow').textContent = detailsExpanded ? '▼' : '▶';
+                }
+                
+                if (settings.isPinned !== undefined) {
+                    isPinned = settings.isPinned;
+                    ipcRenderer.invoke('overlay-set-always-on-top', isPinned);
+                    updatePinButton();
+                }
+            } catch (error) {
+                console.error('加载设置失败:', error);
+            }
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', initializeOverlay);
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', () => {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+                updateInterval = null;
+            }
+            // 清理数据引用
+            statsData = null;
+        });
+    </script>
+</body>
+</html>
