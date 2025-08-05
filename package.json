@@ -1,9 +1,10 @@
 {
   "name": "stardps",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "星痕共鸣第三方DPS统计工具",
   "license": "ISC",
   "author": "SATOU",
+  "maintainers": ["HoshimiRIN"],
   "type": "commonjs",
   "main": "main.js",
   "scripts": {

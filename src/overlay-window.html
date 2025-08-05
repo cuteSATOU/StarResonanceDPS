@@ -60,6 +60,33 @@
                 </div>
             </div>
 
+            <!-- 治疗数据显示区域 -->
+            <div class="hps-main">
+                <div class="dps-item primary">
+                    <div class="dps-label">实时HPS</div>
+                    <div class="dps-value" id="realtimeHps">0</div>
+                    <div class="dps-bar">
+                        <div class="dps-bar-fill" id="realtimeHpsBar"></div>
+                    </div>
+                </div>
+                
+                <div class="dps-item secondary">
+                    <div class="dps-label">峰值HPS</div>
+                    <div class="dps-value" id="maxHps">0</div>
+                    <div class="dps-bar">
+                        <div class="dps-bar-fill max" id="maxHpsBar"></div>
+                    </div>
+                </div>
+                
+                <div class="dps-item tertiary">
+                    <div class="dps-label">平均HPS</div>
+                    <div class="dps-value" id="avgHps">0</div>
+                    <div class="dps-bar">
+                        <div class="dps-bar-fill avg" id="avgHpsBar"></div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 详细统计（可折叠） -->
             <div class="dps-details" id="dpsDetails">
                 <div class="details-header" id="detailsToggle">
@@ -72,12 +99,20 @@
                         <span class="detail-value" id="totalDamage">0</span>
                     </div>
                     <div class="detail-row">
+                        <span class="detail-label">总治疗</span>
+                        <span class="detail-value" id="totalHealing">0</span>
+                    </div>
+                    <div class="detail-row">
                         <span class="detail-label">暴击率</span>
                         <span class="detail-value" id="critRate">0%</span>
                     </div>
                     <div class="detail-row">
                         <span class="detail-label">攻击次数</span>
                         <span class="detail-value" id="attackCount">0</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">治疗次数</span>
+                        <span class="detail-value" id="healingCount">0</span>
                     </div>
                     <div class="detail-row">
                         <span class="detail-label">玩家UID</span>
@@ -115,6 +150,14 @@
                     </label>
                 </div>
 
+                <div class="setting-item">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="hideHpsDisplay">
+                        <span class="checkbox-custom"></span>
+                        隐藏HPS显示
+                    </label>
+                </div>
+
             </div>
         </div>
     </div>
@@ -128,13 +171,18 @@
         let updateFreency = 500; // 默认降低更新频率以节省性能
         let opacity = 90;
         let isPinned = true;
+        let hideHpsDisplay = false;
+        let selfOnlyMode = false;
 
         // DOM元素
         let realtimeDps, maxDps, avgDps, totalDamage, critRate, attackCount, playerUid;
+        let realtimeHps, maxHps, avgHps, totalHealing, healingCount;
         let realtimeDpsBar, maxDpsBar, avgDpsBar;
-        let pinBtn, settingsBtn, minimizeBtn, closeBtn, detailsToggle, detailsContent;
+        let realtimeHpsBar, maxHpsBar, avgHpsBar;
+        let pinBtn, settingsBtn, minimizeBtn, closeBtn;
+        let detailsToggle, detailsContent;
         let overlaySettings, closeSettingsBtn, opacitySlider, opacityValue, updateFrequencySelect;
-        let showDetailsDefaultCheckbox;
+        let showDetailsDefaultCheckbox, hideHpsDisplayCheckbox;
 
         // 初始化
         function initializeOverlay() {
@@ -143,6 +191,11 @@
             maxDps = document.getElementById('maxDps');
             avgDps = document.getElementById('avgDps');
             totalDamage = document.getElementById('totalDamage');
+            realtimeHps = document.getElementById('realtimeHps');
+            maxHps = document.getElementById('maxHps');
+            avgHps = document.getElementById('avgHps');
+            totalHealing = document.getElementById('totalHealing');
+            healingCount = document.getElementById('healingCount');
             critRate = document.getElementById('critRate');
             attackCount = document.getElementById('attackCount');
             playerUid = document.getElementById('playerUid');
@@ -156,6 +209,9 @@
             realtimeDpsBar = document.getElementById('realtimeDpsBar');
             maxDpsBar = document.getElementById('maxDpsBar');
             avgDpsBar = document.getElementById('avgDpsBar');
+            realtimeHpsBar = document.getElementById('realtimeHpsBar');
+            maxHpsBar = document.getElementById('maxHpsBar');
+            avgHpsBar = document.getElementById('avgHpsBar');
             
             pinBtn = document.getElementById('pinBtn');
             settingsBtn = document.getElementById('settingsBtn');
@@ -170,6 +226,7 @@
             opacityValue = document.getElementById('opacityValue');
             updateFrequencySelect = document.getElementById('updateFrequency');
             showDetailsDefaultCheckbox = document.getElementById('showDetailsDefault');
+            hideHpsDisplayCheckbox = document.getElementById('hideHpsDisplay');
 
             bindEvents();
             loadSettings();
@@ -186,87 +243,190 @@
             }
             
             startDataUpdate();
+            
+            // 初始化时调整窗口大小
+            setTimeout(() => {
+                adjustWindowSize();
+            }, 100);
         }
 
         // 绑定事件
         function bindEvents() {
-            // 置顶按钮
-            pinBtn.addEventListener('click', () => {
-                isPinned = !isPinned;
-                ipcRenderer.invoke('overlay-set-always-on-top', isPinned);
-                updatePinButton();
+            console.log('开始绑定事件，检查DOM元素:', {
+                pinBtn: !!pinBtn,
+                settingsBtn: !!settingsBtn,
+                minimizeBtn: !!minimizeBtn,
+                closeBtn: !!closeBtn,
+                detailsToggle: !!detailsToggle,
+                closeSettingsBtn: !!closeSettingsBtn,
+                opacitySlider: !!opacitySlider,
+                updateFrequencySelect: !!updateFrequencySelect,
+                showDetailsDefaultCheckbox: !!showDetailsDefaultCheckbox
             });
+
+            // 置顶按钮
+            if (pinBtn) {
+                pinBtn.addEventListener('click', () => {
+                    console.log('置顶按钮被点击');
+                    isPinned = !isPinned;
+                    ipcRenderer.invoke('overlay-set-always-on-top', isPinned);
+                    updatePinButton();
+                });
+            } else {
+                console.error('置顶按钮元素未找到');
+            }
 
             // 控制按钮
-            settingsBtn.addEventListener('click', () => {
-                overlaySettings.style.display = overlaySettings.style.display === 'none' ? 'block' : 'none';
-            });
+            if (settingsBtn && overlaySettings) {
+                settingsBtn.addEventListener('click', () => {
+                    console.log('设置按钮被点击');
+                    overlaySettings.style.display = overlaySettings.style.display === 'none' ? 'block' : 'none';
+                });
+            } else {
+                console.error('设置按钮或设置面板元素未找到');
+            }
 
-            minimizeBtn.addEventListener('click', () => {
-                ipcRenderer.invoke('overlay-minimize');
-            });
+            if (minimizeBtn) {
+                minimizeBtn.addEventListener('click', () => {
+                    console.log('最小化按钮被点击');
+                    ipcRenderer.invoke('overlay-minimize');
+                });
+            } else {
+                console.error('最小化按钮元素未找到');
+            }
 
-            closeBtn.addEventListener('click', () => {
-                ipcRenderer.invoke('overlay-close');
-            });
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => {
+                    console.log('关闭按钮被点击');
+                    ipcRenderer.invoke('overlay-close');
+                });
+            } else {
+                console.error('关闭按钮元素未找到');
+            }
 
             // 详细统计折叠
-            detailsToggle.addEventListener('click', () => {
-                detailsExpanded = !detailsExpanded;
-                detailsContent.style.display = detailsExpanded ? 'block' : 'none';
-                document.querySelector('.details-arrow').textContent = detailsExpanded ? '▼' : '▶';
-            });
+            if (detailsToggle && detailsContent) {
+                detailsToggle.addEventListener('click', () => {
+                    console.log('详细统计折叠按钮被点击');
+                    detailsExpanded = !detailsExpanded;
+                    detailsContent.style.display = detailsExpanded ? 'block' : 'none';
+                    const arrow = document.querySelector('.details-arrow');
+                    if (arrow) {
+                        arrow.textContent = detailsExpanded ? '▼' : '▶';
+                    }
+                    adjustWindowSize();
+                });
+            } else {
+                console.error('详细统计折叠按钮或内容元素未找到');
+            }
 
             // 设置面板
-            closeSettingsBtn.addEventListener('click', () => {
-                overlaySettings.style.display = 'none';
-            });
+            if (closeSettingsBtn && overlaySettings) {
+                closeSettingsBtn.addEventListener('click', () => {
+                    console.log('关闭设置按钮被点击');
+                    overlaySettings.style.display = 'none';
+                });
+            } else {
+                console.error('关闭设置按钮或设置面板元素未找到');
+            }
 
             // 透明度设置
-            opacitySlider.addEventListener('input', (e) => {
-                opacity = parseInt(e.target.value);
-                opacityValue.textContent = opacity + '%';
-                document.body.style.opacity = opacity / 100;
-                saveSettings();
-            });
+            if (opacitySlider && opacityValue) {
+                opacitySlider.addEventListener('input', (e) => {
+                    console.log('透明度滑块被调整:', e.target.value);
+                    opacity = parseInt(e.target.value);
+                    opacityValue.textContent = opacity + '%';
+                    document.body.style.opacity = opacity / 100;
+                    saveSettings();
+                });
+            } else {
+                console.error('透明度滑块或显示元素未找到');
+            }
 
             // 更新频率设置
-            updateFrequencySelect.addEventListener('change', (e) => {
-                updateFreency = parseInt(e.target.value);
-                restartDataUpdate();
-                saveSettings();
-            });
+            if (updateFrequencySelect) {
+                updateFrequencySelect.addEventListener('change', (e) => {
+                    console.log('更新频率被修改:', e.target.value);
+                    updateFreency = parseInt(e.target.value);
+                    restartDataUpdate();
+                    saveSettings();
+                });
+            } else {
+                console.error('更新频率选择元素未找到');
+            }
 
             // 默认显示详细统计
-            showDetailsDefaultCheckbox.addEventListener('change', (e) => {
-                detailsExpanded = e.target.checked;
-                detailsContent.style.display = detailsExpanded ? 'block' : 'none';
-                document.querySelector('.details-arrow').textContent = detailsExpanded ? '▼' : '▶';
-                saveSettings();
-            });
+            if (showDetailsDefaultCheckbox && detailsContent) {
+                showDetailsDefaultCheckbox.addEventListener('change', (e) => {
+                    console.log('默认显示详细统计复选框被修改:', e.target.checked);
+                    detailsExpanded = e.target.checked;
+                    detailsContent.style.display = detailsExpanded ? 'block' : 'none';
+                    const arrow = document.querySelector('.details-arrow');
+                    if (arrow) {
+                        arrow.textContent = detailsExpanded ? '▼' : '▶';
+                    }
+                    adjustWindowSize();
+                    saveSettings();
+                });
+            } else {
+                console.error('默认显示详细统计复选框或详细内容元素未找到');
+            }
+
+            // 隐藏HPS显示
+            if (hideHpsDisplayCheckbox) {
+                hideHpsDisplayCheckbox.addEventListener('change', (e) => {
+                    console.log('隐藏HPS显示复选框被修改:', e.target.checked);
+                    hideHpsDisplay = e.target.checked;
+                    toggleHpsDisplay();
+                    adjustWindowSize();
+                    saveSettings();
+                });
+            } else {
+                console.error('隐藏HPS显示复选框未找到');
+            }
 
 
 
-            // 接收数据更新
-            ipcRenderer.on('stats-updated', (event, data) => {
-                statsData = data;
-                updateDpsDisplay();
-            });
+            // 原来的数据更新监听器已移到下面，添加了调试信息
 
             // 接收玩家UID更新
             ipcRenderer.on('player-uid-updated', (event, uid) => {
                 console.log('悬浮窗收到UID更新事件:', {
                     uid: uid,
+                    uidType: typeof uid,
                     playerUidElement: playerUid,
-                    playerUidExists: !!playerUid
+                    playerUidExists: !!playerUid,
+                    timestamp: new Date().toISOString()
                 });
                 
                 if (playerUid) {
-                    playerUid.textContent = uid || '未检测';
-                    console.log('UID已更新到悬浮窗，当前显示:', playerUid.textContent);
+                    const displayUid = uid || '未检测';
+                    playerUid.textContent = displayUid;
+                    console.log('UID已更新到悬浮窗，当前显示:', displayUid);
+                    
+                    // 强制触发DOM更新
+                    playerUid.style.color = uid ? '#4CAF50' : '#f44336';
                 } else {
-                    console.error('playerUid DOM元素不存在！');
+                    console.error('playerUid DOM元素不存在！无法更新UID显示');
                 }
+            });
+
+            // 接收"仅自己"模式切换
+            ipcRenderer.on('self-only-mode-changed', (event, enabled) => {
+                console.log('悬浮窗收到"仅自己"模式切换:', enabled);
+                selfOnlyMode = enabled;
+                console.log('悬浮窗"仅自己"模式状态已更新为:', selfOnlyMode);
+            });
+
+            // 接收数据更新
+            ipcRenderer.on('stats-updated', (event, data) => {
+                console.log('悬浮窗收到数据更新:', {
+                    selfOnlyMode: selfOnlyMode,
+                    dataKeys: Object.keys(data),
+                    dataCount: Object.keys(data).length
+                });
+                statsData = data;
+                updateDpsDisplay();
             });
         }
 
@@ -294,22 +454,76 @@
                     playerUidExists: !!playerUid
                 });
                 
-                if (uid && playerUid) {
-                    playerUid.textContent = uid;
-                    console.log('悬浮窗主动获取UID成功，设置为:', uid);
-                } else if (!uid) {
-                    console.log('当前没有玩家UID数据');
-                } else if (!playerUid) {
+                if (playerUid) {
+                    const displayUid = uid || '未检测';
+                    playerUid.textContent = displayUid;
+                    playerUid.style.color = uid ? '#4CAF50' : '#f44336';
+                    console.log('悬浮窗主动获取UID成功，设置为:', displayUid);
+                } else {
                     console.error('playerUid DOM元素不存在！');
                 }
             }).catch(err => {
                 console.error('获取玩家UID失败:', err);
+                if (playerUid) {
+                    playerUid.textContent = '获取失败';
+                    playerUid.style.color = '#f44336';
+                }
             });
         }
 
         // 重启数据更新
         function restartDataUpdate() {
             startDataUpdate();
+        }
+
+        // 自动调整窗口大小
+        function adjustWindowSize() {
+            // 等待DOM更新完成
+            setTimeout(() => {
+                const container = document.querySelector('.overlay-container');
+                if (container) {
+                    const rect = container.getBoundingClientRect();
+                    const newWidth = Math.max(280, Math.min(500, rect.width + 20)); // 添加一些边距
+                    const newHeight = Math.max(200, Math.min(800, rect.height + 20));
+                    
+                    ipcRenderer.invoke('overlay-resize', {
+                        width: Math.ceil(newWidth),
+                        height: Math.ceil(newHeight)
+                    });
+                }
+            }, 50);
+        }
+
+        // 切换HPS显示
+        function toggleHpsDisplay() {
+            console.log('切换HPS显示状态:', hideHpsDisplay);
+            
+            // 隐藏整个HPS主显示区域
+            const hpsMain = document.querySelector('.hps-main');
+            if (hpsMain) {
+                hpsMain.style.display = hideHpsDisplay ? 'none' : '';
+                console.log('HPS主区域显示状态:', hpsMain.style.display);
+            } else {
+                console.error('未找到.hps-main元素');
+            }
+            
+            // 隐藏详细统计中的HPS相关项目
+            const totalHealingRow = document.getElementById('totalHealing')?.closest('.detail-row');
+            const healingCountRow = document.getElementById('healingCount')?.closest('.detail-row');
+            
+            if (totalHealingRow) {
+                totalHealingRow.style.display = hideHpsDisplay ? 'none' : '';
+                console.log('总治疗行显示状态:', totalHealingRow.style.display);
+            } else {
+                console.error('未找到总治疗行元素');
+            }
+            
+            if (healingCountRow) {
+                healingCountRow.style.display = hideHpsDisplay ? 'none' : '';
+                console.log('治疗次数行显示状态:', healingCountRow.style.display);
+            } else {
+                console.error('未找到治疗次数行元素');
+            }
         }
 
         // 更新DPS显示
@@ -322,9 +536,15 @@
                 maxDps.textContent = '0';
                 avgDps.textContent = '0';
                 totalDamage.textContent = '0';
+                realtimeHps.textContent = '0';
+                maxHps.textContent = '0';
+                avgHps.textContent = '0';
+                totalHealing.textContent = '0';
+                healingCount.textContent = '0';
                 critRate.textContent = '0%';
                 attackCount.textContent = '0';
-                updateProgressBars(0, 0, 0);
+                updateProgressBars(0, 0, 0, 0, 0, 0);
+                adjustWindowSize();
                 return;
             }
 
@@ -333,6 +553,11 @@
             let totalMaxDpsValue = 0;
             let totalAvgDpsValue = 0;
             let totalDamageValue = 0;
+            let totalRealtimeHpsValue = 0;
+            let totalMaxHpsValue = 0;
+            let totalAvgHpsValue = 0;
+            let totalHealingValue = 0;
+            let totalHealingCountValue = 0;
             let totalCritCount = 0;
             let totalAttackCount = 0;
 
@@ -342,12 +567,18 @@
                 totalMaxDpsValue = Math.max(totalMaxDpsValue, userData.realtime_dps_max || 0);
                 totalAvgDpsValue += userData.total_dps || 0;
                 totalDamageValue += userData.total_damage.total || 0;
+                totalRealtimeHpsValue += userData.realtime_hps || 0;
+                totalMaxHpsValue = Math.max(totalMaxHpsValue, userData.realtime_hps_max || 0);
+                totalAvgHpsValue += userData.total_hps || 0;
+                totalHealingValue += userData.total_healing ? userData.total_healing.total || 0 : 0;
+                totalHealingCountValue += userData.healing_count ? userData.healing_count.total || 0 : 0;
                 totalCritCount += userData.total_count.critical || 0;
                 totalAttackCount += userData.total_count.total || 0;
             }
 
             if (userIds.length > 0) {
                 totalAvgDpsValue = totalAvgDpsValue / userIds.length;
+                totalAvgHpsValue = totalAvgHpsValue / userIds.length;
             }
 
             const critRateValue = totalAttackCount > 0 ? (totalCritCount / totalAttackCount) : 0;
@@ -357,24 +588,44 @@
             maxDps.textContent = formatNumber(totalMaxDpsValue);
             avgDps.textContent = formatNumber(totalAvgDpsValue);
             totalDamage.textContent = formatNumber(totalDamageValue);
+            realtimeHps.textContent = formatNumber(totalRealtimeHpsValue);
+            maxHps.textContent = formatNumber(totalMaxHpsValue);
+            avgHps.textContent = formatNumber(totalAvgHpsValue);
+            totalHealing.textContent = formatNumber(totalHealingValue);
+            healingCount.textContent = totalHealingCountValue.toString();
             critRate.textContent = (critRateValue * 100).toFixed(1) + '%';
             attackCount.textContent = totalAttackCount.toString();
 
             // 更新进度条
-            updateProgressBars(totalRealtimeDpsValue, totalMaxDpsValue, totalAvgDpsValue);
+            updateProgressBars(totalRealtimeDpsValue, totalMaxDpsValue, totalAvgDpsValue, totalRealtimeHpsValue, totalMaxHpsValue, totalAvgHpsValue);
+            
+            // 调整窗口大小
+            adjustWindowSize();
         }
 
         // 更新进度条
-        function updateProgressBars(realtime, max, avg) {
-            const maxValue = Math.max(realtime, max, avg) || 1;
+        function updateProgressBars(realtime, max, avg, realtimeHps, maxHps, avgHps) {
+            // DPS进度条
+            const maxDpsValue = Math.max(realtime, max, avg) || 1;
             
-            const realtimePercent = (realtime / maxValue) * 100;
-            const maxPercent = (max / maxValue) * 100;
-            const avgPercent = (avg / maxValue) * 100;
+            const realtimePercent = (realtime / maxDpsValue) * 100;
+            const maxPercent = (max / maxDpsValue) * 100;
+            const avgPercent = (avg / maxDpsValue) * 100;
             
             realtimeDpsBar.style.width = `${Math.min(realtimePercent, 100)}%`;
             maxDpsBar.style.width = `${Math.min(maxPercent, 100)}%`;
             avgDpsBar.style.width = `${Math.min(avgPercent, 100)}%`;
+            
+            // HPS进度条
+            const maxHpsValue = Math.max(realtimeHps, maxHps, avgHps) || 1;
+            
+            const realtimeHpsPercent = (realtimeHps / maxHpsValue) * 100;
+            const maxHpsPercent = (maxHps / maxHpsValue) * 100;
+            const avgHpsPercent = (avgHps / maxHpsValue) * 100;
+            
+            if (realtimeHpsBar) realtimeHpsBar.style.width = `${Math.min(realtimeHpsPercent, 100)}%`;
+            if (maxHpsBar) maxHpsBar.style.width = `${Math.min(maxHpsPercent, 100)}%`;
+            if (avgHpsBar) avgHpsBar.style.width = `${Math.min(avgHpsPercent, 100)}%`;
         }
 
         // 格式化数字
@@ -412,7 +663,8 @@
                 opacity,
                 updateFreency,
                 detailsExpanded,
-                isPinned
+                isPinned,
+                hideHpsDisplay
             };
             localStorage.setItem('overlaySettings', JSON.stringify(settings));
         }
@@ -445,6 +697,12 @@
                     isPinned = settings.isPinned;
                     ipcRenderer.invoke('overlay-set-always-on-top', isPinned);
                     updatePinButton();
+                }
+                
+                if (settings.hideHpsDisplay !== undefined) {
+                    hideHpsDisplay = settings.hideHpsDisplay;
+                    hideHpsDisplayCheckbox.checked = hideHpsDisplay;
+                    toggleHpsDisplay();
                 }
             } catch (error) {
                 console.error('加载设置失败:', error);

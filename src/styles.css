@@ -84,19 +84,23 @@ body {
     color: var(--text-primary);
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     min-height: 100vh;
-    overflow: hidden;
+    overflow: auto;
 }
 
 /* App Layout */
 .app {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    min-height: 100vh;
     background: var(--bg-secondary);
 }
 
 /* Navbar */
 .navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -104,7 +108,7 @@ body {
     background: var(--bg-primary);
     border-bottom: 1px solid var(--gray-200);
     box-shadow: var(--shadow-sm);
-    z-index: 10;
+    z-index: 1000;
     -webkit-app-region: drag; /* 让导航栏可以拖拽移动窗口 */
     user-select: none; /* 防止文本选中 */
 }
@@ -294,8 +298,10 @@ body {
     display: flex;
     flex-direction: column;
     padding: var(--space-xl);
+    padding-top: calc(120px + var(--space-xl)); /* 为固定导航栏留出空间 */
     gap: var(--space-xl);
-    overflow: hidden;
+    overflow: auto;
+    min-height: 0;
 }
 
 /* Control Section */
@@ -575,6 +581,7 @@ body {
     gap: var(--space-xl);
     height: 100%;
     overflow: hidden;
+    min-height: 0;
 }
 
 /* Dashboard */
@@ -717,6 +724,7 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    min-height: 0;
 }
 
 .table-header {
@@ -736,6 +744,8 @@ body {
 .table-wrapper {
     flex: 1;
     overflow: auto;
+    max-height: calc(100vh - 400px);
+    position: relative;
 }
 
 .data-table {
@@ -846,6 +856,7 @@ body {
     
     .main-container {
         padding: var(--space-lg);
+        padding-top: calc(160px + var(--space-lg)); /* 响应式下导航栏更高 */
     }
     
     .dashboard {
@@ -920,6 +931,7 @@ body {
     
     .main-container {
         padding: var(--space-md);
+        padding-top: calc(180px + var(--space-md)); /* 小屏幕下导航栏最高 */
         gap: var(--space-md);
     }
     

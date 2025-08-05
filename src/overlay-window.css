@@ -94,7 +94,9 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.2);
     overflow: hidden;
     min-width: 280px;
-    max-width: 400px;
+    max-width: 500px;
+    width: fit-content;
+    height: fit-content;
     user-select: none;
 }
 

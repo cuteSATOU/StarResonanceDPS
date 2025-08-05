@@ -95,6 +95,10 @@
                                     <span class="btn-icon">📱</span>
                                     <span class="btn-text">悬浮窗</span>
                                 </button>
+                                <button id="toggleSelfOnlyBtn" class="btn btn-outline">
+                                    <span class="btn-info">模式：</span>
+                                    <span class="btn-text">👻谁是内鬼</span>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -122,7 +126,7 @@
                 <div class="stats-container" id="statsContainer" style="display: none;">
                     <!-- 概览仪表板 -->
                     <div class="dashboard">
-                        <div class="metric-card primary">
+                        <div class="metric-card primary" id="realtimeDpsCard">
                             <div class="metric-header">
                                 <div class="metric-icon">⚡</div>
                                 <div class="metric-info">
@@ -136,7 +140,7 @@
                             </div>
                         </div>
 
-                        <div class="metric-card danger">
+                        <div class="metric-card danger" id="maxDpsCard">
                             <div class="metric-header">
                                 <div class="metric-icon">🔥</div>
                                 <div class="metric-info">
@@ -150,7 +154,7 @@
                             </div>
                         </div>
 
-                        <div class="metric-card success">
+                        <div class="metric-card success" id="avgDpsCard">
                             <div class="metric-header">
                                 <div class="metric-icon">📈</div>
                                 <div class="metric-info">
@@ -164,7 +168,7 @@
                             </div>
                         </div>
 
-                        <div class="metric-card warning">
+                        <div class="metric-card warning" id="totalDamageCard">
                             <div class="metric-header">
                                 <div class="metric-icon">💥</div>
                                 <div class="metric-info">
@@ -173,6 +177,62 @@
                                 </div>
                             </div>
                             <div class="metric-value" id="totalDamage">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card primary" id="realtimeHpsCard">
+                            <div class="metric-header">
+                                <div class="metric-icon">💚</div>
+                                <div class="metric-info">
+                                    <h4>实时 HPS</h4>
+                                    <span class="metric-subtitle">当前每秒治疗</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalRealtimeHps">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card danger" id="maxHpsCard">
+                            <div class="metric-header">
+                                <div class="metric-icon">🌟</div>
+                                <div class="metric-info">
+                                    <h4>峰值 HPS</h4>
+                                    <span class="metric-subtitle">历史最高</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalMaxHps">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card success" id="avgHpsCard">
+                            <div class="metric-header">
+                                <div class="metric-icon">📊</div>
+                                <div class="metric-info">
+                                    <h4>平均 HPS</h4>
+                                    <span class="metric-subtitle">总体平均</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalAvgHps">0</div>
+                            <div class="metric-chart">
+                                <div class="chart-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="metric-card warning" id="totalHealingCard">
+                            <div class="metric-header">
+                                <div class="metric-icon">💖</div>
+                                <div class="metric-info">
+                                    <h4>总治疗</h4>
+                                    <span class="metric-subtitle">累计治疗</span>
+                                </div>
+                            </div>
+                            <div class="metric-value" id="totalHealing">0</div>
                             <div class="metric-chart">
                                 <div class="chart-bar" style="width: 0%"></div>
                             </div>
@@ -224,6 +284,27 @@
                                             <span>暴击率</span>
                                             <span class="sort-icon">↕️</span>
                                         </th>
+                                        <th class="sortable" data-sort="realtime-hps">
+                                            <span>实时 HPS</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="max-hps">
+                                            <span>峰值 HPS</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="avg-hps">
+                                            <span>平均 HPS</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="total-healing">
+                                            <span>总治疗</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th>治疗普通</th>
+                                        <th>治疗暴击</th>
+                                        <th>治疗幸运</th>
+                                        <th>治疗暴击幸运</th>
+                                        <th>治疗次数</th>
                                     </tr>
                                 </thead>
                                 <tbody>
