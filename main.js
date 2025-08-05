@@ -86,7 +86,7 @@ function flushLogQueue() {
 
 // 日志配置
 const logger = winston.createLogger({
-    level: 'info',
+    level: 'debug',
     format: winston.format.combine(
         winston.format.colorize({ all: true }),
         winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -394,37 +394,15 @@ function processPacket(buf) {
                                     const hpLessenValue = hit[9] ?? 0;
                                     const rawValue = value ?? luckyValue;
                                     
-                                    // 更精确的治疗与伤害区分逻辑
-                                    // 基于游戏机制分析：
-                                    // 1. 技能ID可能包含治疗技能的标识
-                                    // 2. 某些字段可能专门标识治疗类型
-                                    // 3. 数值的正负性结合其他条件判断
-                                    
+                                    //看起来HealFlag不为undefined时即为治疗
                                     const damageType = hit[1];     // 可能的伤害类型
                                     const actionType = hit[3];     // 可能的动作类型
                                     const healFlag = hit[4];       // 可能的治疗标识
                                     const elementType = hit[7];    // 可能的元素类型
                                     const targetType = hit[10];    // 可能的目标类型
                                     
-                                    // 多重判断条件来区分治疗和伤害
-                                    let isHealing = false;
-                                    
-                                    // 条件1: 检查是否有明确的治疗标识
-                                    if (healFlag !== undefined && healFlag !== null && healFlag !== 0) {
-                                        isHealing = true;
-                                    }
-                                    // 条件2: 检查技能ID是否为治疗技能（假设治疗技能ID在特定范围）
-                                    else if (skill && (skill >= 10000 && skill <= 19999)) { // 假设治疗技能ID范围
-                                        isHealing = true;
-                                    }
-                                    // 条件3: 检查数值为负且不是普通伤害
-                                    else if (rawValue < 0 && damageType !== 1) {
-                                        isHealing = true;
-                                    }
-                                    // 条件4: 检查特定的动作类型或目标类型
-                                    else if (actionType === 2 || targetType === 1) { // 假设这些值表示治疗
-                                        isHealing = true;
-                                    }
+                                    // 检查治疗标识
+                                    let isHealing = healFlag !== undefined && healFlag !== null && healFlag !== 0;
                                     
                                     const damage = isHealing ? 0 : Math.abs(rawValue);
                                     const healing = isHealing ? Math.abs(rawValue) : 0;
@@ -752,7 +730,7 @@ function startCapture(deviceIndex) {
                             tcp_next_seq = ret.info.seqno;
                         }
                         
-                        logger.debug('TCP next seq: ' + tcp_next_seq);
+                        //logger.debug('TCP next seq: ' + tcp_next_seq);
                         tcp_cache[ret.info.seqno] = buf;
                         tcp_cache_size++;
                         
