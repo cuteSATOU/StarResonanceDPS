@@ -428,6 +428,13 @@
                 statsData = data;
                 updateDpsDisplay();
             });
+            
+            // 接收数据清空事件（F10快捷键触发）
+            ipcRenderer.on('stats-cleared', (event) => {
+                console.log('悬浮窗收到数据清空事件');
+                statsData = {};
+                updateDpsDisplay();
+            });
         }
 
         // 开始数据更新

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron');
 const path = require('path');
 const cap = require('cap');
 const winston = require("winston");
@@ -14,10 +14,12 @@ const PROTOCOL = decoders.PROTOCOL;
 let mainWindow;
 let logWindow;
 let overlayWindow;
+let rankingOverlayWindow; // DPS排行榜悬浮窗
 let devices = [];
 let isCapturing = false;
 let selectedDevice = null;
 let overlayEnabled = false;
+let rankingOverlayEnabled = false; // DPS排行榜悬浮窗状态
 let selfOnlyMode = false;
 
 // 统计数据
@@ -31,6 +33,7 @@ let damage_time = {};
 let healing_time = {}; // 治疗时间统计
 let realtime_dps = {};
 let realtime_hps = {}; // 实时HPS (Healing Per Second)
+let player_skills = {}; // 玩家技能信息，用于职业识别
 
 // 网络包处理变量
 let user_uid;
@@ -40,6 +43,11 @@ let tcp_next_seq = -1;
 let tcp_cache = {};
 let tcp_cache_size = 0;
 let tcp_last_time = 0;
+
+// 性能监控变量
+let packet_count = 0;
+let last_packet_time = 0;
+let performance_warnings = 0;
 
 // 日志缓存队列，用于在mainWindow创建前缓存日志
 let logQueue = [];
@@ -169,6 +177,9 @@ function createWindow() {
         if (overlayWindow) {
             overlayWindow.close();
         }
+        if (rankingOverlayWindow) {
+            rankingOverlayWindow.close();
+        }
     });
 }
 
@@ -289,7 +300,87 @@ function createOverlayWindow() {
     }
 }
 
+// 创建DPS排行榜悬浮窗
+function createRankingOverlayWindow() {
+    if (rankingOverlayWindow) {
+        rankingOverlayWindow.focus();
+        return;
+    }
 
+    rankingOverlayWindow = new BrowserWindow({
+        width: 300,
+        height: 145,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        resizable: false,
+        skipTaskbar: true,
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        },
+        title: 'DPS排行榜'
+    });
+
+    rankingOverlayWindow.loadFile('src/dps-ranking-overlay.html');
+
+    // 设置初始位置到屏幕左上角
+    const { screen } = require('electron');
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.workAreaSize;
+    rankingOverlayWindow.setPosition(50, 50);
+
+    // 开发时打开开发者工具
+    if (process.env.NODE_ENV === 'development') {
+        rankingOverlayWindow.webContents.openDevTools();
+    }
+
+    rankingOverlayWindow.on('closed', () => {
+        rankingOverlayWindow = null;
+        rankingOverlayEnabled = false;
+        if (mainWindow) {
+            mainWindow.webContents.send('ranking-overlay-status-changed', false);
+        }
+    });
+
+    // 排行榜悬浮窗加载完成后发送初始数据
+    rankingOverlayWindow.webContents.once('did-finish-load', () => {
+        setTimeout(() => {
+            // 发送当前统计数据
+            if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+                const userData = {};
+                Object.keys(total_damage).forEach(uid => {
+                    if (total_damage[uid] && total_damage[uid].total > 0) {
+                        userData[uid] = {
+                            totalDamage: total_damage[uid].total,
+                            skills: Array.from(player_skills[uid] || []),
+                            realtimeDps: realtime_dps[uid] ? realtime_dps[uid].value : 0
+                        };
+                    }
+                });
+                rankingOverlayWindow.webContents.send('stats-updated', { users: userData });
+                logger.info('Sending initial stats to ranking overlay window');
+            }
+            
+            // 发送当前玩家UID（如果有的话）
+            if (user_uid && rankingOverlayWindow && rankingOverlayWindow.webContents) {
+                rankingOverlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                logger.info('Sending initial UID to ranking overlay window: ' + user_uid.toString());
+            } else {
+                // 即使没有UID，也发送一个空值来触发排行榜的初始化
+                if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+                    rankingOverlayWindow.webContents.send('player-uid-updated', null);
+                    logger.info('Sending null UID to ranking overlay window for initialization');
+                }
+            }
+        }, 500);
+    });
+
+    rankingOverlayEnabled = true;
+    if (mainWindow) {
+        mainWindow.webContents.send('ranking-overlay-status-changed', true);
+    }
+}
 
 // 获取设备列表
 function getDeviceList() {
@@ -368,6 +459,11 @@ function processPacket(buf) {
                                         }
                                     }, 1000);
                                 }
+                                // 通知DPS排行榜悬浮窗
+                                if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+                                    rankingOverlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                                    logger.info('Sending UID update to ranking overlay window: ' + user_uid.toString());
+                                }
                             } else {
                                 logger.debug('UID unchanged, current UID: ' + user_uid);
                             }
@@ -417,6 +513,12 @@ function processPacket(buf) {
                                     
                                     const operator_uid = BigInt(hit[21] || hit[11]) >> 16n;
                                     if (!operator_uid) break;
+                                    
+                                    // 记录玩家技能信息（用于职业识别）
+                                    if (!player_skills[operator_uid]) {
+                                        player_skills[operator_uid] = new Set();
+                                    }
+                                    player_skills[operator_uid].add(skill);
                                     
                                     // 初始化伤害数据结构
                                     if (!total_damage[operator_uid]) {
@@ -613,7 +715,7 @@ function startCapture(deviceIndex) {
         selectedDevice = device;
         const c = new Cap();
         const filter = 'ip and tcp';
-        const bufSize = 10 * 1024 * 1024;
+        const bufSize = 50 * 1024 * 1024; // 增加到50MB缓冲区
         const buffer = Buffer.alloc(65535);
         
         const linkType = c.open(device.name, filter, bufSize, buffer);
@@ -635,6 +737,21 @@ function startCapture(deviceIndex) {
         }
 
         c.on('packet', async function (nbytes, trunc) {
+            // 性能监控
+            packet_count++;
+            const now = Date.now();
+            if (last_packet_time === 0) {
+                last_packet_time = now;
+            } else if (now - last_packet_time > 5000) { // 每5秒检查一次
+                const pps = packet_count / ((now - last_packet_time) / 1000);
+                if (pps > 1000 && performance_warnings < 5) { // 每秒超过1000包时警告
+                    logger.warn(`高流量检测: ${pps.toFixed(0)} 包/秒, TCP缓存: ${tcp_cache_size}`);
+                    performance_warnings++;
+                }
+                packet_count = 0;
+                last_packet_time = now;
+            }
+            
             const buffer1 = Buffer.from(buffer);
             
             if (linkType === 'ETHERNET') {
@@ -702,12 +819,17 @@ function startCapture(deviceIndex) {
                                                                 logger.warn('Main window not available for UID update');
                                                             }
                                                             // 通知悬浮窗
-                                                            if (overlayWindow && overlayWindow.webContents) {
-                                                                overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
-                                                                logger.info('Sending UID update to overlay window: ' + user_uid.toString());
-                                                            } else {
-                                                                logger.warn('Overlay window not available for UID update');
-                                                            }
+                                            if (overlayWindow && overlayWindow.webContents) {
+                                                overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                                                logger.info('Sending UID update to overlay window: ' + user_uid.toString());
+                                            } else {
+                                                logger.warn('Overlay window not available for UID update');
+                                            }
+                                            // 通知DPS排行榜悬浮窗
+                                            if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+                                                rankingOverlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                                                logger.info('Sending UID update to ranking overlay window: ' + user_uid.toString());
+                                            }
                                                         }
                                                     }
                                                 }
@@ -723,49 +845,63 @@ function startCapture(deviceIndex) {
                             return;
                         }
                         
-                        // TCP包重组处理
-                        await tcp_lock.acquire();
-                        
-                        if (tcp_next_seq === -1 && buf.length > 4 && buf.readUInt32BE() < 999999) {
-                            tcp_next_seq = ret.info.seqno;
-                        }
-                        
-                        //logger.debug('TCP next seq: ' + tcp_next_seq);
-                        tcp_cache[ret.info.seqno] = buf;
-                        tcp_cache_size++;
-                        
-                        while (tcp_cache[tcp_next_seq]) {
-                            const seq = tcp_next_seq;
-                            _data = _data.length === 0 ? tcp_cache[seq] : Buffer.concat([_data, tcp_cache[seq]]);
-                            tcp_next_seq = (seq + tcp_cache[seq].length) >>> 0;
-                            tcp_cache[seq] = undefined;
-                            tcp_cache_size--;
-                            tcp_last_time = Date.now();
-                            
-                            setTimeout(() => {
-                                if (tcp_cache[seq]) {
-                                    tcp_cache[seq] = undefined;
+                        // TCP包重组处理 - 使用异步处理避免阻塞
+                        setImmediate(async () => {
+                            try {
+                                await tcp_lock.acquire();
+                                
+                                if (tcp_next_seq === -1 && buf.length > 4 && buf.readUInt32BE() < 999999) {
+                                    tcp_next_seq = ret.info.seqno;
+                                }
+                                
+                                tcp_cache[ret.info.seqno] = buf;
+                                tcp_cache_size++;
+                                
+                                // 防止缓存过大导致内存溢出
+                                if (tcp_cache_size > 10000) {
+                                    logger.warn(`TCP缓存过大 (${tcp_cache_size})，清理旧数据`);
+                                    const keys = Object.keys(tcp_cache).sort((a, b) => parseInt(a) - parseInt(b));
+                                    const toDelete = keys.slice(0, tcp_cache_size - 5000);
+                                    for (const key of toDelete) {
+                                        if (tcp_cache[key]) {
+                                            delete tcp_cache[key];
+                                            tcp_cache_size--;
+                                        }
+                                    }
+                                }
+                                
+                                while (tcp_cache[tcp_next_seq]) {
+                                    const seq = tcp_next_seq;
+                                    _data = _data.length === 0 ? tcp_cache[seq] : Buffer.concat([_data, tcp_cache[seq]]);
+                                    tcp_next_seq = (seq + tcp_cache[seq].length) >>> 0;
+                                    delete tcp_cache[seq];
                                     tcp_cache_size--;
+                                    tcp_last_time = Date.now();
                                 }
-                            }, 10000);
-                        }
-                        
-                        while (_data.length > 4) {
-                            let len = _data.readUInt32BE();
-                            if (_data.length >= len) {
-                                const packet = _data.subarray(0, len);
-                                _data = _data.subarray(len);
-                                processPacket(packet);
-                            } else {
-                                if (len > 999999) {
-                                    logger.error(`无效长度!! ${_data.length},${len},${_data.toString('hex')},${tcp_next_seq}`);
-                                    process.exit(1);
+                                
+                                while (_data.length > 4) {
+                                    let len = _data.readUInt32BE();
+                                    if (_data.length >= len) {
+                                        const packet = _data.subarray(0, len);
+                                        _data = _data.subarray(len);
+                                        // 异步处理数据包，避免阻塞
+                                        setImmediate(() => processPacket(packet));
+                                    } else {
+                                        if (len > 999999) {
+                                            logger.error(`无效长度!! ${_data.length},${len}，重置TCP状态`);
+                                            // 不退出程序，而是重置TCP状态
+                                            clearTcpCache();
+                                        }
+                                        break;
+                                    }
                                 }
-                                break;
+                                
+                                tcp_lock.release();
+                            } catch (error) {
+                                logger.error('TCP包处理错误:', error);
+                                tcp_lock.release();
                             }
-                        }
-                        
-                        tcp_lock.release();
+                        });
                     }
                 }
             }
@@ -811,6 +947,7 @@ function clearStats() {
     healing_time = {};
     realtime_dps = {};
     realtime_hps = {};
+    player_skills = {};
     
     // 立即发送空数据到渲染进程，清除界面显示
     const emptyData = {};
@@ -828,60 +965,58 @@ function clearStats() {
 function startDataUpdateTimers() {
     // 计算实时DPS和HPS
     statsUpdateInterval = setInterval(() => {
-        // 只有在抓包状态下才更新统计数据
-        if (!isCapturing) {
-            return;
-        }
-        
         const now = Date.now();
         
-        // 计算实时DPS
-        for (const uid of Object.keys(dps_window)) {
-            while (dps_window[uid].length > 0 && dps_window[uid][0] && dps_window[uid][0].time && now - dps_window[uid][0].time > 1000) {
-                dps_window[uid].shift();
+        // 只有在抓包状态下才计算实时DPS和HPS
+        if (isCapturing) {
+            // 计算实时DPS
+            for (const uid of Object.keys(dps_window)) {
+                while (dps_window[uid].length > 0 && dps_window[uid][0] && dps_window[uid][0].time && now - dps_window[uid][0].time > 1000) {
+                    dps_window[uid].shift();
+                }
+                
+                if (!realtime_dps[uid]) {
+                    realtime_dps[uid] = {
+                        value: 0,
+                        max: 0,
+                    };
+                }
+                
+                realtime_dps[uid].value = 0;
+                for (const b of dps_window[uid]) {
+                    realtime_dps[uid].value += b.damage;
+                }
+                
+                if (realtime_dps[uid].value > realtime_dps[uid].max) {
+                    realtime_dps[uid].max = realtime_dps[uid].value;
+                }
             }
             
-            if (!realtime_dps[uid]) {
-                realtime_dps[uid] = {
-                    value: 0,
-                    max: 0,
-                };
-            }
-            
-            realtime_dps[uid].value = 0;
-            for (const b of dps_window[uid]) {
-                realtime_dps[uid].value += b.damage;
-            }
-            
-            if (realtime_dps[uid].value > realtime_dps[uid].max) {
-                realtime_dps[uid].max = realtime_dps[uid].value;
+            // 计算实时HPS
+            for (const uid of Object.keys(hps_window)) {
+                while (hps_window[uid].length > 0 && hps_window[uid][0] && hps_window[uid][0].time && now - hps_window[uid][0].time > 1000) {
+                    hps_window[uid].shift();
+                }
+                
+                if (!realtime_hps[uid]) {
+                    realtime_hps[uid] = {
+                        value: 0,
+                        max: 0,
+                    };
+                }
+                
+                realtime_hps[uid].value = 0;
+                for (const h of hps_window[uid]) {
+                    realtime_hps[uid].value += h.healing;
+                }
+                
+                if (realtime_hps[uid].value > realtime_hps[uid].max) {
+                    realtime_hps[uid].max = realtime_hps[uid].value;
+                }
             }
         }
         
-        // 计算实时HPS
-        for (const uid of Object.keys(hps_window)) {
-            while (hps_window[uid].length > 0 && hps_window[uid][0] && hps_window[uid][0].time && now - hps_window[uid][0].time > 1000) {
-                hps_window[uid].shift();
-            }
-            
-            if (!realtime_hps[uid]) {
-                realtime_hps[uid] = {
-                    value: 0,
-                    max: 0,
-                };
-            }
-            
-            realtime_hps[uid].value = 0;
-            for (const h of hps_window[uid]) {
-                realtime_hps[uid].value += h.healing;
-            }
-            
-            if (realtime_hps[uid].value > realtime_hps[uid].max) {
-                realtime_hps[uid].max = realtime_hps[uid].value;
-            }
-        }
-        
-        // 发送数据到渲染进程
+        // 发送数据到渲染进程（无论是否在抓包都发送）
         const userData = {};
         
         // 合并所有用户ID（伤害和治疗）
@@ -967,6 +1102,13 @@ function startDataUpdateTimers() {
                 userData[uid].realtime_hps = realtime_hps[uid] ? realtime_hps[uid].value : 0;
                 userData[uid].realtime_hps_max = realtime_hps[uid] ? realtime_hps[uid].max : 0;
             }
+            
+            // 添加技能信息（用于职业识别）
+            if (player_skills[uid]) {
+                userData[uid].skills = Array.from(player_skills[uid]);
+            } else {
+                userData[uid].skills = [];
+            }
         }
         
         // 发送到主窗口
@@ -983,6 +1125,22 @@ function startDataUpdateTimers() {
                 overlayData = userData[currentUid] ? { [currentUid]: userData[currentUid] } : {};
             }
             overlayWindow.webContents.send('stats-updated', overlayData);
+        }
+        
+        // 发送数据到DPS排行榜悬浮窗
+        if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+            const rankingData = {};
+            Object.keys(total_damage).forEach(uid => {
+                if (total_damage[uid] && total_damage[uid].total > 0) {
+                    rankingData[uid] = {
+                        totalDamage: total_damage[uid].total,
+                        skills: Array.from(player_skills[uid] || []),
+                        // 添加实时DPS
+                        realtimeDps: realtime_dps[uid] ? realtime_dps[uid].value : 0
+                    };
+                }
+            });
+            rankingOverlayWindow.webContents.send('stats-updated', { users: rankingData });
         }
     }, 100);
 
@@ -1020,9 +1178,9 @@ function startDataUpdateTimers() {
         }
 
         // 限制TCP缓存大小
-        if (tcp_cache_size > 1000) {
+        if (tcp_cache_size > 5000) { // 增加TCP缓存限制到5000
             const keys = Object.keys(tcp_cache);
-            const toDelete = keys.slice(0, tcp_cache_size - 800);
+            const toDelete = keys.slice(0, tcp_cache_size - 4000);
             for (const key of toDelete) {
                 delete tcp_cache[key];
                 tcp_cache_size--;
@@ -1035,7 +1193,7 @@ function startDataUpdateTimers() {
         }
 
         logger.debug(`Memory cleanup completed - DPS windows: ${Object.keys(dps_window).length}, HPS windows: ${Object.keys(hps_window).length}, TCP cache: ${tcp_cache_size}, Log cache: ${logQueue.length}`);
-    }, 30000);
+    }, 60000); // 增加清理间隔到60秒，减少性能开销
 }
 
 // 停止所有定时器
@@ -1124,6 +1282,29 @@ ipcMain.handle('toggle-overlay', () => {
     }
 });
 
+// DPS排行榜悬浮窗控制
+ipcMain.handle('toggle-ranking-overlay', () => {
+    if (rankingOverlayWindow) {
+        rankingOverlayWindow.close();
+        return false;
+    } else {
+        createRankingOverlayWindow();
+        return true;
+    }
+});
+
+ipcMain.handle('ranking-overlay-close', () => {
+    if (rankingOverlayWindow) {
+        rankingOverlayWindow.close();
+    }
+});
+
+ipcMain.handle('ranking-overlay-set-always-on-top', (event, alwaysOnTop) => {
+    if (rankingOverlayWindow) {
+        rankingOverlayWindow.setAlwaysOnTop(alwaysOnTop);
+    }
+});
+
 ipcMain.handle('overlay-minimize', () => {
     if (overlayWindow) {
         overlayWindow.minimize();
@@ -1145,6 +1326,12 @@ ipcMain.handle('overlay-set-always-on-top', (event, alwaysOnTop) => {
 ipcMain.handle('overlay-resize', (event, { width, height }) => {
     if (overlayWindow) {
         overlayWindow.setSize(width, height);
+    }
+});
+
+ipcMain.handle('ranking-overlay-resize', (event, { width, height }) => {
+    if (rankingOverlayWindow) {
+        rankingOverlayWindow.setSize(width, height);
     }
 });
 
@@ -1239,6 +1426,13 @@ ipcMain.handle('get-stats-data', () => {
             userData[uid].realtime_hps = realtime_hps[uid] ? realtime_hps[uid].value : 0;
             userData[uid].realtime_hps_max = realtime_hps[uid] ? realtime_hps[uid].max : 0;
         }
+        
+        // 添加技能信息（用于职业识别）
+        if (player_skills[uid]) {
+            userData[uid].skills = Array.from(player_skills[uid]);
+        } else {
+            userData[uid].skills = [];
+        }
     }
     
     return userData;
@@ -1265,6 +1459,68 @@ ipcMain.handle('toggle-self-only-mode', (event, enabled) => {
 // 应用事件
 app.whenReady().then(() => {
     createWindow();
+    
+    // 注册全局快捷键
+    try {
+        // F10: 清空数据
+        globalShortcut.register('F10', () => {
+            logger.info('F10 pressed - clearing stats data');
+            clearStats();
+            // 通知所有窗口数据已清空
+            if (mainWindow && mainWindow.webContents) {
+                mainWindow.webContents.send('stats-cleared');
+            }
+            if (overlayWindow && overlayWindow.webContents) {
+                overlayWindow.webContents.send('stats-cleared');
+            }
+            if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+                rankingOverlayWindow.webContents.send('stats-cleared');
+            }
+        });
+        
+        // F11: 切换只看自己/看全队模式
+        globalShortcut.register('F11', () => {
+            selfOnlyMode = !selfOnlyMode;
+            logger.info(`F11 pressed - toggled self-only mode to: ${selfOnlyMode}`);
+            // 通知所有窗口模式已切换
+            if (mainWindow && mainWindow.webContents) {
+                mainWindow.webContents.send('self-only-mode-changed', selfOnlyMode);
+            }
+            if (overlayWindow && overlayWindow.webContents) {
+                overlayWindow.webContents.send('self-only-mode-changed', selfOnlyMode);
+            }
+        });
+        
+        // Ctrl+F12: 打开开发者工具
+        globalShortcut.register('CommandOrControl+F12', () => {
+            logger.info('Ctrl+F12 pressed - opening dev tools');
+            // 获取当前焦点窗口并打开开发者工具
+            const focusedWindow = BrowserWindow.getFocusedWindow();
+            if (focusedWindow && focusedWindow.webContents) {
+                if (focusedWindow.webContents.isDevToolsOpened()) {
+                    focusedWindow.webContents.closeDevTools();
+                    logger.info('Dev tools closed');
+                } else {
+                    focusedWindow.webContents.openDevTools();
+                    logger.info('Dev tools opened');
+                }
+            } else if (mainWindow && mainWindow.webContents) {
+                // 如果没有焦点窗口，默认打开主窗口的开发者工具
+                if (mainWindow.webContents.isDevToolsOpened()) {
+                    mainWindow.webContents.closeDevTools();
+                    logger.info('Main window dev tools closed');
+                } else {
+                    mainWindow.webContents.openDevTools();
+                    logger.info('Main window dev tools opened');
+                }
+            }
+        });
+        
+        logger.info('Global shortcuts registered: F10 (clear data), F11 (toggle self-only mode), Ctrl+F12 (toggle dev tools)');
+    } catch (error) {
+        logger.error('Failed to register global shortcuts:', error);
+    }
+    
     // 自动创建悬浮窗，这样用户就能看到UID更新
     setTimeout(() => {
         try {
@@ -1281,6 +1537,16 @@ app.whenReady().then(() => {
             logger.error('Failed to auto-create overlay window:', error);
         }
     }, 1000);
+    
+    // 自动创建DPS排行榜悬浮窗
+    setTimeout(() => {
+        try {
+            createRankingOverlayWindow();
+            logger.info('Auto-created ranking overlay window on startup');
+        } catch (error) {
+            logger.error('Failed to auto-create ranking overlay window:', error);
+        }
+    }, 1500);
     // 不在应用启动时自动启动定时器，而是在开始抓包时启动
 });
 
@@ -1290,6 +1556,8 @@ app.on('window-all-closed', () => {
             stopCapture();
         }
         stopDataUpdateTimers();
+        // 注销全局快捷键
+        globalShortcut.unregisterAll();
         app.quit();
     }
 });

@@ -2,7 +2,7 @@ const { ipcRenderer } = require('electron');
 
 // DOM元素引用
 let statusCard, statusIndicator, currentDevice, playerUid, noDataMessage, statsContainer;
-let deviceSelect, refreshDeviceBtn, startCaptureBtn, stopCaptureBtn, clearStatsBtn, showLogBtn, toggleOverlayBtn, toggleSelfOnlyBtn;
+let deviceSelect, refreshDeviceBtn, startCaptureBtn, stopCaptureBtn, clearStatsBtn, showLogBtn, toggleOverlayBtn, toggleRankingOverlayBtn, toggleSelfOnlyBtn;
 let totalRealtimeDps, totalMaxDps, totalAvgDps, totalDamage, statsTable;
 let totalRealtimeHps, totalMaxHps, totalAvgHps, totalHealing;
 let minimizeBtn, maximizeBtn, closeBtn;
@@ -11,6 +11,7 @@ let minimizeBtn, maximizeBtn, closeBtn;
 let isCapturing = false;
 let statsData = {};
 let overlayEnabled = false;
+let rankingOverlayEnabled = false;
 let selfOnlyMode = false;
 let currentPlayerUid = null;
 
@@ -34,6 +35,7 @@ function initializeElements() {
     clearStatsBtn = document.getElementById('clearStatsBtn');
     showLogBtn = document.getElementById('showLogBtn');
     toggleOverlayBtn = document.getElementById('toggleOverlayBtn');
+    toggleRankingOverlayBtn = document.getElementById('toggleRankingOverlayBtn');
     toggleSelfOnlyBtn = document.getElementById('toggleSelfOnlyBtn');
     
     // 窗口控制按钮
@@ -125,6 +127,16 @@ function bindEventListeners() {
         }
     });
 
+    // 切换DPS排行榜悬浮窗
+    toggleRankingOverlayBtn.addEventListener('click', async () => {
+        try {
+            const enabled = await ipcRenderer.invoke('toggle-ranking-overlay');
+            updateRankingOverlayButton(enabled);
+        } catch (error) {
+            console.error('切换DPS排行榜悬浮窗失败:', error);
+        }
+    });
+
     // 切换"仅自己"模式
     toggleSelfOnlyBtn.addEventListener('click', async () => {
         try {
@@ -190,6 +202,27 @@ function bindIpcListeners() {
         overlayEnabled = enabled;
         updateOverlayButton(enabled);
     });
+    
+    // 接收DPS排行榜悬浮窗状态变化
+    ipcRenderer.on('ranking-overlay-status-changed', (event, enabled) => {
+        rankingOverlayEnabled = enabled;
+        updateRankingOverlayButton(enabled);
+    });
+    
+    // 接收数据清空事件（F10快捷键触发）
+    ipcRenderer.on('stats-cleared', (event) => {
+        console.log('收到数据清空事件');
+        statsData = {};
+        updateStatsDisplay();
+    });
+    
+    // 接收模式切换事件（F11快捷键触发）
+    ipcRenderer.on('self-only-mode-changed', (event, enabled) => {
+        console.log('收到模式切换事件:', enabled);
+        selfOnlyMode = enabled;
+        updateSelfOnlyButton(enabled);
+        updateStatsDisplay();
+    });
 }
 
 // 更新抓包状态
@@ -239,6 +272,54 @@ function formatNumber(num, decimals = 0) {
 function formatPercentage(num) {
     if (typeof num !== 'number' || isNaN(num)) return '0%';
     return (num * 100).toFixed(1) + '%';
+}
+
+// 根据skill id识别职业
+function getRoleNameBySkills(skills) {
+    if (!skills || !Array.isArray(skills) || skills.length === 0) {
+        return '未知';
+    }
+    
+    // 遍历技能列表，找到匹配的职业
+    for (const skill of skills) {
+        switch (skill) {
+            case 1241:
+                return '射线';
+            case 55302:
+                return '协奏';
+            case 20301:
+                return '愈合';
+            case 1518:
+                return '惩戒';
+            case 2306:
+                return '狂音';
+            case 120902:
+                return '冰矛';
+            case 1714:
+                return '居合';
+            case 44701:
+                return '月刃';
+            case 220112:
+            case 2203622:
+                return '鹰弓';
+            case 1700827:
+                return '狼弓';
+            case 1419:
+                return '空枪';
+            case 1418:
+                return '重装';
+            case 2405:
+                return '防盾';
+            case 2406:
+                return '光盾';
+            case 199902:
+                return '岩盾';
+            default:
+                continue;
+        }
+    }
+    
+    return '未知';
 }
 
 // 更新统计数据显示
@@ -332,8 +413,12 @@ function updateStatsTable() {
         const healing = userData.total_healing || { total: 0, normal: 0, critical: 0, lucky: 0, crit_lucky: 0 };
         const healingCount = userData.healing_count || { total: 0, normal: 0, critical: 0, lucky: 0, crit_lucky: 0 };
         
+        // 获取职业名称
+        const roleName = getRoleNameBySkills(userData.skills);
+        
         row.innerHTML = `
             <td>${uid}</td>
+            <td>${roleName}</td>
             <td class="number">${formatNumber(userData.realtime_dps)}</td>
             <td class="number">${formatNumber(userData.realtime_dps_max)}</td>
             <td class="number">${formatNumber(userData.total_dps)}</td>
@@ -703,6 +788,27 @@ function updateOverlayButton(enabled) {
             btnIcon.textContent = '📱';
             toggleOverlayBtn.classList.remove('btn-success');
             toggleOverlayBtn.classList.add('btn-outline');
+        }
+    }
+}
+
+// 更新DPS排行榜悬浮窗按钮状态
+function updateRankingOverlayButton(enabled) {
+    rankingOverlayEnabled = enabled;
+    if (toggleRankingOverlayBtn) {
+        const btnText = toggleRankingOverlayBtn.querySelector('.btn-text');
+        const btnIcon = toggleRankingOverlayBtn.querySelector('.btn-icon');
+        
+        if (enabled) {
+            btnText.textContent = '关闭排行榜';
+            btnIcon.textContent = '🏆';
+            toggleRankingOverlayBtn.classList.remove('btn-outline');
+            toggleRankingOverlayBtn.classList.add('btn-success');
+        } else {
+            btnText.textContent = 'DPS排行榜';
+            btnIcon.textContent = '🏆';
+            toggleRankingOverlayBtn.classList.remove('btn-success');
+            toggleRankingOverlayBtn.classList.add('btn-outline');
         }
     }
 }

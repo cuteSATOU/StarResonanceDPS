@@ -752,6 +752,14 @@ body {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
+    table-layout: auto;
+}
+
+/* 表格列自适应宽度 */
+.data-table th,
+.data-table td {
+    white-space: nowrap;
+    width: auto;
 }
 
 .data-table th {
