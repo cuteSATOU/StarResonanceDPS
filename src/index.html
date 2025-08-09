@@ -248,9 +248,9 @@
                         <div class="table-header">
                             <h3>详细统计</h3>
                             <div class="table-controls">
-                                <button class="btn btn-sm btn-outline" id="exportBtn">
-                                    <span class="btn-icon">📤</span>
-                                    导出数据
+                                <button class="btn btn-sm btn-primary" id="showDetailBtn" disabled>
+                                    <span class="btn-icon">📊</span>
+                                    查看详细信息
                                 </button>
                             </div>
                         </div>
@@ -260,11 +260,15 @@
                                 <thead>
                                     <tr>
                                         <th class="sortable" data-sort="uid">
-                                            <span>玩家 UID</span>
+                                            <span>玩家</span>
                                             <span class="sort-icon">↕️</span>
                                         </th>
                                         <th class="sortable" data-sort="role">
                                             <span>职业</span>
+                                            <span class="sort-icon">↕️</span>
+                                        </th>
+                                        <th class="sortable" data-sort="fightpoint">
+                                            <span>战力</span>
                                             <span class="sort-icon">↕️</span>
                                         </th>
                                         <th class="sortable" data-sort="realtime">
@@ -312,7 +316,7 @@
                                         <th>治疗暴击</th>
                                         <th>治疗幸运</th>
                                         <th>治疗暴击幸运</th>
-                                        <th>治疗次数</th>
+                            <th>治疗次数</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -324,6 +328,197 @@
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- 用户详细分析弹窗 -->
+    <div class="modal-overlay" id="userDetailModal" style="display: none;">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3>用户详细分析</h3>
+                <div class="user-selector">
+                    <label>切换用户：</label>
+                    <select id="userDetailSelect" class="user-select">
+                        <!-- 动态填充用户列表 -->
+                    </select>
+                </div>
+                <button class="modal-close" id="closeUserDetailModal">✕</button>
+            </div>
+            
+            <div class="modal-content">
+                <!-- 用户基本信息 -->
+                <div class="user-info-section">
+                    <div class="user-info-card">
+                        <div class="user-avatar">
+                            <span class="user-icon">👤</span>
+                        </div>
+                        <div class="user-details">
+                            <h4 id="selectedUserUid">用户 UID</h4>
+                            <p id="selectedUserRole">职业</p>
+                        </div>
+                        <div class="user-stats-summary">
+                            <div class="summary-item">
+                                <span class="summary-label">总伤害</span>
+                                <span class="summary-value" id="userTotalDamage">0</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="summary-label">总治疗</span>
+                                <span class="summary-value" id="userTotalHealing">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 数据类型切换标签 -->
+                <div class="tab-container">
+                    <div class="tab-buttons">
+                        <button class="tab-button active" data-tab="damage">伤害分析</button>
+                        <button class="tab-button" data-tab="healing">治疗分析</button>
+                    </div>
+                </div>
+
+                <!-- 伤害分析标签页 -->
+                <div class="tab-content active" id="damageTab">
+                    <div class="analysis-grid">
+                        <!-- 技能伤害占比图表 -->
+                        <div class="analysis-card">
+                            <h5>技能伤害占比</h5>
+                            <div class="skill-chart" id="damageSkillChart">
+                                <!-- 动态生成技能占比条形图 -->
+                            </div>
+                        </div>
+
+                        <!-- 伤害统计表格 -->
+                        <div class="analysis-card">
+                            <h5>技能详细统计</h5>
+                            <div class="skill-table-wrapper">
+                                <table class="skill-table">
+                                    <thead>
+                                        <tr>
+                                            <th>技能ID</th>
+                                            <th>总伤害</th>
+                                            <th>占比</th>
+                                            <th>次数</th>
+                                            <th>平均伤害</th>
+                                            <th>最高伤害</th>
+                                            <th>暴击率</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="damageSkillTableBody">
+                                        <!-- 动态填充技能数据 -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- 伤害类型分布 -->
+                        <div class="analysis-card">
+                            <h5>伤害类型分布</h5>
+                            <div class="damage-type-chart">
+                                <div class="damage-type-item">
+                                    <span class="type-label">普通伤害</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill normal" id="normalDamageBar"></div>
+                                    </div>
+                                    <span class="type-value" id="normalDamageValue">0</span>
+                                </div>
+                                <div class="damage-type-item">
+                                    <span class="type-label">暴击伤害</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill critical" id="criticalDamageBar"></div>
+                                    </div>
+                                    <span class="type-value" id="criticalDamageValue">0</span>
+                                </div>
+                                <div class="damage-type-item">
+                                    <span class="type-label">幸运伤害</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill lucky" id="luckyDamageBar"></div>
+                                    </div>
+                                    <span class="type-value" id="luckyDamageValue">0</span>
+                                </div>
+                                <div class="damage-type-item">
+                                    <span class="type-label">暴击幸运</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill crit-lucky" id="critLuckyDamageBar"></div>
+                                    </div>
+                                    <span class="type-value" id="critLuckyDamageValue">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 治疗分析标签页 -->
+                <div class="tab-content" id="healingTab">
+                    <div class="analysis-grid">
+                        <!-- 技能治疗占比图表 -->
+                        <div class="analysis-card">
+                            <h5>技能治疗占比</h5>
+                            <div class="skill-chart" id="healingSkillChart">
+                                <!-- 动态生成技能占比条形图 -->
+                            </div>
+                        </div>
+
+                        <!-- 治疗统计表格 -->
+                        <div class="analysis-card">
+                            <h5>技能详细统计</h5>
+                            <div class="skill-table-wrapper">
+                                <table class="skill-table">
+                                    <thead>
+                                        <tr>
+                                            <th>技能ID</th>
+                                            <th>总治疗</th>
+                                            <th>占比</th>
+                                            <th>次数</th>
+                                            <th>平均治疗</th>
+                                            <th>最高治疗</th>
+                                            <th>暴击率</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="healingSkillTableBody">
+                                        <!-- 动态填充技能数据 -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- 治疗类型分布 -->
+                        <div class="analysis-card">
+                            <h5>治疗类型分布</h5>
+                            <div class="damage-type-chart">
+                                <div class="damage-type-item">
+                                    <span class="type-label">普通治疗</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill normal" id="normalHealingBar"></div>
+                                    </div>
+                                    <span class="type-value" id="normalHealingValue">0</span>
+                                </div>
+                                <div class="damage-type-item">
+                                    <span class="type-label">暴击治疗</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill critical" id="criticalHealingBar"></div>
+                                    </div>
+                                    <span class="type-value" id="criticalHealingValue">0</span>
+                                </div>
+                                <div class="damage-type-item">
+                                    <span class="type-label">幸运治疗</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill lucky" id="luckyHealingBar"></div>
+                                    </div>
+                                    <span class="type-value" id="luckyHealingValue">0</span>
+                                </div>
+                                <div class="damage-type-item">
+                                    <span class="type-label">暴击幸运</span>
+                                    <div class="type-bar">
+                                        <div class="type-fill crit-lucky" id="critLuckyHealingBar"></div>
+                                    </div>
+                                    <span class="type-value" id="critLuckyHealingValue">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="renderer.js"></script>

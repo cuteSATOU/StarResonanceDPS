@@ -172,6 +172,24 @@ function bindEventListeners() {
             await ipcRenderer.invoke('window-close');
         });
     }
+
+    // 查看详细信息按钮
+    const showDetailBtn = document.getElementById('showDetailBtn');
+    if (showDetailBtn) {
+        showDetailBtn.addEventListener('click', () => {
+            // 获取当前用户UID（如果有的话）
+            const currentUserUid = getCurrentUserUid();
+            if (currentUserUid && statsData[currentUserUid]) {
+                openUserDetailModal(currentUserUid);
+            } else {
+                // 如果没有当前用户，打开第一个用户的详细信息
+                const firstUid = Object.keys(statsData)[0];
+                if (firstUid) {
+                    openUserDetailModal(firstUid);
+                }
+            }
+        });
+    }
 }
 
 // IPC事件监听
@@ -179,7 +197,11 @@ function bindIpcListeners() {
     // 接收统计数据更新
     ipcRenderer.on('stats-updated', (event, data) => {
         statsData = data;
-        updateStatsDisplay();
+        // 使用防抖来减少频繁更新
+        clearTimeout(window.updateStatsTimeout);
+        window.updateStatsTimeout = setTimeout(() => {
+            updateStatsDisplay();
+        }, 100);
     });
 
     // 接收玩家UID更新
@@ -382,14 +404,20 @@ function updateStatsDisplay() {
     // 更新表格
     updateStatsTable();
     
-    // 更新图表进度条
+    // 更新图表
     updateMetricCharts();
+    
+    // 更新查看详细信息按钮状态
+    const showDetailBtn = document.getElementById('showDetailBtn');
+    if (showDetailBtn) {
+        const hasData = Object.keys(statsData).length > 0;
+        showDetailBtn.disabled = !hasData;
+    }
 }
 
 // 更新统计表格
 function updateStatsTable() {
     const tbody = statsTable.querySelector('tbody');
-    tbody.innerHTML = '';
     
     let userIds = Object.keys(statsData).sort();
     
@@ -397,6 +425,18 @@ function updateStatsTable() {
     if (selfOnlyMode && currentPlayerUid) {
         userIds = userIds.filter(uid => uid === currentPlayerUid);
     }
+    
+    // 获取现有的行，避免完全重新渲染
+    const existingRows = Array.from(tbody.querySelectorAll('tr'));
+    const existingUids = existingRows.map(row => row.cells[0].textContent);
+    
+    // 移除不再存在的用户行
+    existingRows.forEach(row => {
+        const uid = row.cells[0].textContent;
+        if (!userIds.includes(uid)) {
+            row.remove();
+        }
+    });
     
     for (const uid of userIds) {
         const userData = statsData[uid];
@@ -406,9 +446,6 @@ function updateStatsTable() {
         // 计算暴击率
         const critRate = count.total > 0 ? count.critical / count.total : 0;
         
-        const row = document.createElement('tr');
-        row.className = 'stats-update';
-        
         // 获取治疗数据
         const healing = userData.total_healing || { total: 0, normal: 0, critical: 0, lucky: 0, crit_lucky: 0 };
         const healingCount = userData.healing_count || { total: 0, normal: 0, critical: 0, lucky: 0, crit_lucky: 0 };
@@ -416,9 +453,23 @@ function updateStatsTable() {
         // 获取职业名称
         const roleName = getRoleNameBySkills(userData.skills);
         
+        // 查找现有行或创建新行
+        let row = existingRows.find(r => r.cells[0].textContent === uid);
+        let isNewRow = false;
+        
+        if (!row) {
+            row = document.createElement('tr');
+            isNewRow = true;
+        }
+        
+        // 获取显示名称和战力
+        const displayName = userData.displayName || uid;
+        const fightPoint = userData.playerFightPoint ? formatNumber(userData.playerFightPoint) : '-';
+        
         row.innerHTML = `
-            <td>${uid}</td>
+            <td title="UID: ${uid}">${displayName}</td>
             <td>${roleName}</td>
+            <td class="number">${fightPoint}</td>
             <td class="number">${formatNumber(userData.realtime_dps)}</td>
             <td class="number">${formatNumber(userData.realtime_dps_max)}</td>
             <td class="number">${formatNumber(userData.total_dps)}</td>
@@ -440,12 +491,9 @@ function updateStatsTable() {
             <td class="number">${healingCount.total}</td>
         `;
         
-        tbody.appendChild(row);
-        
-        // 移除动画类
-        setTimeout(() => {
-            row.classList.remove('stats-update');
-        }, 500);
+        if (isNewRow) {
+            tbody.appendChild(row);
+        }
     }
 }
 
@@ -717,6 +765,7 @@ async function initialize() {
     bindKeyboardShortcuts();
     addTooltips();
     await initializeStatus();
+    initializeModalElements();
     
     // 定期更新时间显示（如果需要）
     setInterval(() => {
@@ -825,4 +874,410 @@ function updateSelfOnlyButton(enabled) {
             if (btnText) btnText.textContent = '👻谁是内鬼';
         }
     }
+}
+
+// 用户详细分析弹窗相关变量
+let userDetailModal, userDetailSelect, closeUserDetailModal;
+let selectedUserUid, selectedUserRole, userTotalDamage, userTotalHealing;
+let damageTab, healingTab, tabButtons;
+let damageSkillChart, healingSkillChart;
+let damageSkillTableBody, healingSkillTableBody;
+let currentAnalysisData = {};
+
+// 初始化弹窗元素
+function initializeModalElements() {
+    userDetailModal = document.getElementById('userDetailModal');
+    userDetailSelect = document.getElementById('userDetailSelect');
+    closeUserDetailModal = document.getElementById('closeUserDetailModal');
+    selectedUserUid = document.getElementById('selectedUserUid');
+    selectedUserRole = document.getElementById('selectedUserRole');
+    userTotalDamage = document.getElementById('userTotalDamage');
+    userTotalHealing = document.getElementById('userTotalHealing');
+    damageTab = document.getElementById('damageTab');
+    healingTab = document.getElementById('healingTab');
+    damageSkillChart = document.getElementById('damageSkillChart');
+    healingSkillChart = document.getElementById('healingSkillChart');
+    damageSkillTableBody = document.getElementById('damageSkillTableBody');
+    healingSkillTableBody = document.getElementById('healingSkillTableBody');
+    tabButtons = document.querySelectorAll('.tab-button');
+    
+    bindModalEventListeners();
+}
+
+// 绑定弹窗事件监听器
+function bindModalEventListeners() {
+    // 关闭弹窗
+    if (closeUserDetailModal) {
+        closeUserDetailModal.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('Close button clicked');
+            closeModal();
+        });
+    }
+    
+    // 点击遮罩层关闭弹窗
+    if (userDetailModal) {
+        userDetailModal.addEventListener('click', (e) => {
+            if (e.target === userDetailModal) {
+                console.log('Modal overlay clicked');
+                closeModal();
+            }
+        });
+    }
+    
+    // 用户选择器变化
+    if (userDetailSelect) {
+        userDetailSelect.addEventListener('change', (e) => {
+            const selectedUid = e.target.value;
+            console.log('User selector changed to:', selectedUid);
+            if (selectedUid && statsData[selectedUid]) {
+                updateModalData(selectedUid);
+            }
+        });
+    }
+    
+    // 标签页切换
+    tabButtons.forEach(button => {
+        button.addEventListener('click', (e) => {
+            const tabType = e.target.dataset.tab;
+            console.log('Tab switched to:', tabType);
+            switchTab(tabType);
+        });
+    });
+    
+    // ESC键关闭弹窗
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && userDetailModal && userDetailModal.style.display !== 'none') {
+            console.log('ESC key pressed, closing modal');
+            closeModal();
+        }
+    });
+}
+
+// 打开用户详细分析弹窗
+function openUserDetailModal(uid) {
+    console.log('Opening modal for user:', uid);
+    console.log('Modal element:', userDetailModal);
+    console.log('User data:', statsData[uid]);
+    
+    if (!userDetailModal || !statsData[uid]) {
+        console.log('Modal or user data not available');
+        return;
+    }
+    
+    // 更新用户选择器
+    updateUserSelector();
+    
+    // 设置当前选中的用户
+    if (userDetailSelect) {
+        userDetailSelect.value = uid;
+    }
+    
+    // 更新弹窗数据
+    updateModalData(uid);
+    
+    // 显示弹窗
+    userDetailModal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    console.log('Modal opened successfully');
+}
+
+// 关闭弹窗
+function closeModal() {
+    if (userDetailModal) {
+        userDetailModal.style.display = 'none';
+        document.body.style.overflow = 'auto';
+    }
+}
+
+// 更新用户选择器
+function updateUserSelector() {
+    if (!userDetailSelect) return;
+    
+    userDetailSelect.innerHTML = '';
+    
+    Object.keys(statsData).forEach(uid => {
+        const userData = statsData[uid];
+        const displayName = userData.displayName || uid;
+        const option = document.createElement('option');
+        option.value = uid;
+        option.textContent = `${displayName} (${getRoleNameBySkills(userData.skills)})`;
+        option.title = `UID: ${uid}`;
+        userDetailSelect.appendChild(option);
+    });
+}
+
+// 更新弹窗数据
+function updateModalData(uid) {
+    const userData = statsData[uid];
+    if (!userData) {
+        return;
+    }
+    
+    // 更新用户基本信息
+    const displayName = userData.displayName || uid;
+    const fightPoint = userData.playerFightPoint ? formatNumber(userData.playerFightPoint) : '未知';
+    
+    if (selectedUserUid) {
+        selectedUserUid.textContent = displayName;
+        selectedUserUid.title = `UID: ${uid}`;
+    }
+    if (selectedUserRole) {
+        selectedUserRole.textContent = `${getRoleNameBySkills(userData.skills)} | 战力: ${fightPoint}`;
+    }
+    if (userTotalDamage) userTotalDamage.textContent = formatNumber(userData.total_damage ? userData.total_damage.total : 0);
+    if (userTotalHealing) userTotalHealing.textContent = formatNumber(userData.total_healing ? userData.total_healing.total : 0);
+    
+    // 分析技能数据
+    currentAnalysisData = analyzeUserSkillData(userData);
+    
+    // 更新当前显示的标签页
+    const activeTab = document.querySelector('.tab-button.active');
+    const tabType = activeTab ? activeTab.dataset.tab : 'damage';
+    updateTabContent(tabType);
+}
+
+// 分析用户技能数据
+function analyzeUserSkillData(userData) {
+    const damageSkills = {};
+    const healingSkills = {};
+    
+    // 调试：检查技能统计数据是否存在
+    if (userData.skill_damage_stats || userData.skill_healing_stats || userData.skill_count_stats) {
+        
+    } else {
+        console.log('技能统计数据为空或未定义');
+    }
+    
+    // 检查是否有技能伤害统计数据
+    if (userData.skill_damage_stats && Object.keys(userData.skill_damage_stats).length > 0) {
+        for (const [skillId, skillData] of Object.entries(userData.skill_damage_stats)) {
+            if (skillData.total && skillData.total > 0) {
+                const countData = userData.skill_count_stats[skillId] || {};
+                damageSkills[skillId] = {
+                    totalDamage: skillData.total,
+                    count: countData.total || 0,
+                    maxDamage: skillData.max || 0,
+                    avgDamage: countData.total > 0 ? skillData.total / countData.total : 0,
+                    critRate: countData.total > 0 ? ((countData.critical || 0) / countData.total * 100) : 0
+                };
+
+            }
+        }
+    }
+    
+    // 检查是否有技能治疗统计数据
+    if (userData.skill_healing_stats && Object.keys(userData.skill_healing_stats).length > 0) {
+        for (const [skillId, skillData] of Object.entries(userData.skill_healing_stats)) {
+            if (skillData.total && skillData.total > 0) {
+                const countData = userData.skill_count_stats[skillId] || {};
+                healingSkills[skillId] = {
+                    totalHealing: skillData.total,
+                    count: countData.healing_total || 0,
+                    maxHealing: skillData.healing_max || 0,
+                    avgHealing: countData.healing_total > 0 ? skillData.total / countData.healing_total : 0,
+                    critRate: countData.healing_total > 0 ? ((countData.healing_critical || 0) / countData.healing_total * 100) : 0
+                };
+
+            }
+        }
+    }
+    
+
+    
+    return { damageSkills, healingSkills, userData };
+}
+
+// 切换标签页
+function switchTab(tabType) {
+    // 更新标签按钮状态
+    tabButtons.forEach(button => {
+        if (button.dataset.tab === tabType) {
+            button.classList.add('active');
+        } else {
+            button.classList.remove('active');
+        }
+    });
+    
+    // 更新标签页内容显示
+    if (damageTab && healingTab) {
+        if (tabType === 'damage') {
+            damageTab.classList.add('active');
+            healingTab.classList.remove('active');
+        } else {
+            healingTab.classList.add('active');
+            damageTab.classList.remove('active');
+        }
+    }
+    
+    // 更新标签页内容
+    updateTabContent(tabType);
+}
+
+// 更新标签页内容
+function updateTabContent(tabType) {
+    if (tabType === 'damage') {
+        updateDamageAnalysis();
+    } else {
+        updateHealingAnalysis();
+    }
+}
+
+// 更新伤害分析
+function updateDamageAnalysis() {
+    const { damageSkills, userData } = currentAnalysisData;
+    
+    // 更新技能占比图表
+    updateSkillChart(damageSkillChart, damageSkills, 'totalDamage');
+    
+    // 更新技能统计表格
+    updateSkillTable(damageSkillTableBody, damageSkills, 'damage');
+    
+    // 更新伤害类型分布
+    updateDamageTypeChart(userData);
+}
+
+// 更新治疗分析
+function updateHealingAnalysis() {
+    const { healingSkills, userData } = currentAnalysisData;
+    
+    // 更新技能占比图表
+    updateSkillChart(healingSkillChart, healingSkills, 'totalHealing');
+    
+    // 更新技能统计表格
+    updateSkillTable(healingSkillTableBody, healingSkills, 'healing');
+    
+    // 更新治疗类型分布
+    updateHealingTypeChart(userData);
+}
+
+// 更新技能图表
+function updateSkillChart(chartElement, skillsData, valueKey) {
+    if (!chartElement) return;
+    
+    chartElement.innerHTML = '';
+    
+    // 计算总值
+    const totalValue = Object.values(skillsData).reduce((sum, skill) => sum + skill[valueKey], 0);
+    
+    if (totalValue === 0) {
+        chartElement.innerHTML = '<div class="no-data">暂无数据</div>';
+        return;
+    }
+    
+    // 按值排序
+    const sortedSkills = Object.entries(skillsData)
+        .sort(([,a], [,b]) => b[valueKey] - a[valueKey]);
+    
+    sortedSkills.forEach(([skillId, skillData]) => {
+        const percentage = (skillData[valueKey] / totalValue * 100).toFixed(1);
+        
+        const skillItem = document.createElement('div');
+        skillItem.className = 'skill-item';
+        skillItem.innerHTML = `
+            <div class="skill-name">技能${skillId}</div>
+            <div class="skill-bar">
+                <div class="skill-fill" style="width: ${percentage}%"></div>
+            </div>
+            <div class="skill-percentage">${percentage}%</div>
+            <div class="skill-value">${formatNumber(skillData[valueKey])}</div>
+        `;
+        
+        chartElement.appendChild(skillItem);
+    });
+    
+
+}
+
+// 更新技能表格
+function updateSkillTable(tableBody, skillsData, type) {
+    if (!tableBody) return;
+    
+    tableBody.innerHTML = '';
+    
+    // 计算总值
+    const valueKey = type === 'damage' ? 'totalDamage' : 'totalHealing';
+    const totalValue = Object.values(skillsData).reduce((sum, skill) => sum + skill[valueKey], 0);
+    
+    if (totalValue === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="7" style="text-align: center; color: var(--text-muted);">暂无数据</td>';
+        tableBody.appendChild(row);
+        return;
+    }
+    
+    // 按值排序
+    const sortedSkills = Object.entries(skillsData)
+        .sort(([,a], [,b]) => b[valueKey] - a[valueKey]);
+    
+    sortedSkills.forEach(([skillId, skillData]) => {
+        const percentage = (skillData[valueKey] / totalValue * 100).toFixed(1);
+        const avgKey = type === 'damage' ? 'avgDamage' : 'avgHealing';
+        const maxKey = type === 'damage' ? 'maxDamage' : 'maxHealing';
+        
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>技能${skillId}</td>
+            <td class="number">${formatNumber(skillData[valueKey])}</td>
+            <td class="number">${percentage}%</td>
+            <td class="number">${skillData.count}</td>
+            <td class="number">${formatNumber(skillData[avgKey])}</td>
+            <td class="number">${formatNumber(skillData[maxKey])}</td>
+            <td class="number">${skillData.critRate.toFixed(1)}%</td>
+        `;
+        
+        tableBody.appendChild(row);
+    });
+    
+
+}
+
+// 更新伤害类型分布图表
+function updateDamageTypeChart(userData) {
+    if (!userData.total_damage) return;
+    
+    const damage = userData.total_damage;
+    const total = damage.total;
+    
+    if (total === 0) return;
+    
+    // 更新各类型的条形图和数值
+    updateTypeBar('normalDamageBar', 'normalDamageValue', damage.normal, total);
+    updateTypeBar('criticalDamageBar', 'criticalDamageValue', damage.critical, total);
+    updateTypeBar('luckyDamageBar', 'luckyDamageValue', damage.lucky, total);
+    updateTypeBar('critLuckyDamageBar', 'critLuckyDamageValue', damage.crit_lucky, total);
+}
+
+// 更新治疗类型分布图表
+function updateHealingTypeChart(userData) {
+    if (!userData.total_healing) return;
+    
+    const healing = userData.total_healing;
+    const total = healing.total;
+    
+    if (total === 0) return;
+    
+    // 更新各类型的条形图和数值
+    updateTypeBar('normalHealingBar', 'normalHealingValue', healing.normal, total);
+    updateTypeBar('criticalHealingBar', 'criticalHealingValue', healing.critical, total);
+    updateTypeBar('luckyHealingBar', 'luckyHealingValue', healing.lucky, total);
+    updateTypeBar('critLuckyHealingBar', 'critLuckyHealingValue', healing.crit_lucky, total);
+}
+
+// 更新类型条形图
+function updateTypeBar(barId, valueId, value, total) {
+    const barElement = document.getElementById(barId);
+    const valueElement = document.getElementById(valueId);
+    
+    if (barElement && valueElement) {
+        const percentage = total > 0 ? (value / total * 100) : 0;
+        barElement.style.width = `${percentage}%`;
+        valueElement.textContent = formatNumber(value);
+    }
+}
+
+// 获取当前用户UID
+function getCurrentUserUid() {
+    return currentPlayerUid;
 }

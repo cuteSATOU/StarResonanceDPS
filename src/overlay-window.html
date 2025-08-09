@@ -400,12 +400,25 @@
                 });
                 
                 if (playerUid) {
-                    const displayUid = uid || '未检测';
-                    playerUid.textContent = displayUid;
-                    console.log('UID已更新到悬浮窗，当前显示:', displayUid);
-                    
-                    // 强制触发DOM更新
-                    playerUid.style.color = uid ? '#4CAF50' : '#f44336';
+                    // 获取当前玩家的显示名称
+                    if (uid) {
+                        ipcRenderer.invoke('get-user-data', uid).then(userData => {
+                            const displayName = userData ? userData.displayName : uid;
+                            playerUid.textContent = displayName;
+                            playerUid.title = `UID: ${uid}`;
+                            playerUid.style.color = '#4CAF50';
+                            console.log('UID已更新到悬浮窗，当前显示:', displayName);
+                        }).catch(err => {
+                            console.error('获取用户数据失败:', err);
+                            playerUid.textContent = uid;
+                            playerUid.title = `UID: ${uid}`;
+                            playerUid.style.color = '#4CAF50';
+                        });
+                    } else {
+                        playerUid.textContent = '未检测';
+                        playerUid.title = '';
+                        playerUid.style.color = '#f44336';
+                    }
                 } else {
                     console.error('playerUid DOM元素不存在！无法更新UID显示');
                 }
@@ -462,10 +475,26 @@
                 });
                 
                 if (playerUid) {
-                    const displayUid = uid || '未检测';
-                    playerUid.textContent = displayUid;
-                    playerUid.style.color = uid ? '#4CAF50' : '#f44336';
-                    console.log('悬浮窗主动获取UID成功，设置为:', displayUid);
+                    if (uid) {
+                        // 获取用户数据以显示displayName
+                        ipcRenderer.invoke('get-user-data', uid).then(userData => {
+                            const displayName = userData ? userData.displayName : uid;
+                            playerUid.textContent = displayName;
+                            playerUid.title = `UID: ${uid}`;
+                            playerUid.style.color = '#4CAF50';
+                            console.log('悬浮窗主动获取UID成功，设置为:', displayName);
+                        }).catch(err => {
+                            console.error('获取用户数据失败:', err);
+                            playerUid.textContent = uid;
+                            playerUid.title = `UID: ${uid}`;
+                            playerUid.style.color = '#4CAF50';
+                        });
+                    } else {
+                        playerUid.textContent = '未检测';
+                        playerUid.title = '';
+                        playerUid.style.color = '#f44336';
+                        console.log('悬浮窗主动获取UID，但UID为空');
+                    }
                 } else {
                     console.error('playerUid DOM元素不存在！');
                 }
@@ -473,6 +502,7 @@
                 console.error('获取玩家UID失败:', err);
                 if (playerUid) {
                     playerUid.textContent = '获取失败';
+                    playerUid.title = '';
                     playerUid.style.color = '#f44336';
                 }
             });
@@ -558,34 +588,50 @@
             // 计算总体数据
             let totalRealtimeDpsValue = 0;
             let totalMaxDpsValue = 0;
-            let totalAvgDpsValue = 0;
             let totalDamageValue = 0;
             let totalRealtimeHpsValue = 0;
             let totalMaxHpsValue = 0;
-            let totalAvgHpsValue = 0;
             let totalHealingValue = 0;
             let totalHealingCountValue = 0;
             let totalCritCount = 0;
             let totalAttackCount = 0;
+            let earliestTime = null;
+            let latestTime = null;
 
             for (const uid of userIds) {
                 const userData = statsData[uid];
                 totalRealtimeDpsValue += userData.realtime_dps || 0;
                 totalMaxDpsValue = Math.max(totalMaxDpsValue, userData.realtime_dps_max || 0);
-                totalAvgDpsValue += userData.total_dps || 0;
                 totalDamageValue += userData.total_damage.total || 0;
                 totalRealtimeHpsValue += userData.realtime_hps || 0;
                 totalMaxHpsValue = Math.max(totalMaxHpsValue, userData.realtime_hps_max || 0);
-                totalAvgHpsValue += userData.total_hps || 0;
                 totalHealingValue += userData.total_healing ? userData.total_healing.total || 0 : 0;
                 totalHealingCountValue += userData.healing_count ? userData.healing_count.total || 0 : 0;
                 totalCritCount += userData.total_count.critical || 0;
                 totalAttackCount += userData.total_count.total || 0;
+                
+                // 计算总体战斗时间范围
+                if (userData.damage_time && userData.damage_time.length > 0) {
+                    const userEarliest = userData.damage_time[0];
+                    const userLatest = userData.damage_time[userData.damage_time.length - 1];
+                    if (earliestTime === null || userEarliest < earliestTime) {
+                        earliestTime = userEarliest;
+                    }
+                    if (latestTime === null || userLatest > latestTime) {
+                        latestTime = userLatest;
+                    }
+                }
             }
 
-            if (userIds.length > 0) {
-                totalAvgDpsValue = totalAvgDpsValue / userIds.length;
-                totalAvgHpsValue = totalAvgHpsValue / userIds.length;
+            // 计算真正的平均DPS和HPS
+            let totalAvgDpsValue = 0;
+            let totalAvgHpsValue = 0;
+            if (earliestTime && latestTime && latestTime > earliestTime) {
+                const totalTimeDiff = latestTime - earliestTime;
+                if (totalTimeDiff >= 1000) { // 至少1秒
+                    totalAvgDpsValue = (totalDamageValue / totalTimeDiff * 1000) || 0;
+                    totalAvgHpsValue = (totalHealingValue / totalTimeDiff * 1000) || 0;
+                }
             }
 
             const critRateValue = totalAttackCount > 0 ? (totalCritCount / totalAttackCount) : 0;

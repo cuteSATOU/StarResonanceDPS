@@ -4,7 +4,12 @@ const cap = require('cap');
 const winston = require("winston");
 const zlib = require('zlib');
 const pb = require('./algo/pb');
+const bpb = require('./algo/blueprotobuf');
+const pbjs = require("protobufjs/minimal");
 const { Readable } = require("stream");
+const PacketProcessor = require('./algo/packet');
+
+// PacketProcessor 实例将在后面创建
 
 const Cap = cap.Cap;
 const decoders = cap.decoders;
@@ -18,6 +23,7 @@ let rankingOverlayWindow; // DPS排行榜悬浮窗
 let devices = [];
 let isCapturing = false;
 let selectedDevice = null;
+let capInstance = null; // Cap实例
 let overlayEnabled = false;
 let rankingOverlayEnabled = false; // DPS排行榜悬浮窗状态
 let selfOnlyMode = false;
@@ -34,6 +40,14 @@ let healing_time = {}; // 治疗时间统计
 let realtime_dps = {};
 let realtime_hps = {}; // 实时HPS (Healing Per Second)
 let player_skills = {}; // 玩家技能信息，用于职业识别
+let skill_damage_stats = {}; // 按技能ID统计的伤害数据
+let skill_healing_stats = {}; // 按技能ID统计的治疗数据
+let skill_count_stats = {}; // 按技能ID统计的使用次数
+
+// 用户数据管理器
+let player_names = {}; // 玩家昵称 {uid: name}
+let player_fight_points = {}; // 玩家战力 {uid: fightPoint}
+let player_profession_ids = {}; // 玩家职业ID {uid: professionId}
 
 // 网络包处理变量
 let user_uid;
@@ -94,7 +108,7 @@ function flushLogQueue() {
 
 // 日志配置
 const logger = winston.createLogger({
-    level: 'info',
+    level: 'debug',
     format: winston.format.combine(
         winston.format.colorize({ all: true }),
         winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -106,6 +120,9 @@ const logger = winston.createLogger({
         new ElectronTransport()
     ]
 });
+
+// PacketProcessor 实例将在 UserDataManager 定义后初始化
+let packetProcessor;
 
 // Lock类用于TCP包处理同步
 class Lock {
@@ -132,6 +149,246 @@ class Lock {
 }
 
 const tcp_lock = new Lock();
+
+// 用户数据管理器方法
+class UserDataManager {
+    static setName(uid, name) {
+        player_names[uid] = name;
+        logger.info(`Set player name: ${name} for UID ${uid}`);
+    }
+    
+    static setFightPoint(uid, fightPoint) {
+        player_fight_points[uid] = fightPoint;
+        logger.debug(`Set player fight point: ${fightPoint} for UID ${uid}`);
+    }
+    
+    static setProfession(uid, professionId) {
+        player_profession_ids[uid] = professionId;
+        logger.debug(`Set player profession ID: ${professionId} for UID ${uid}`);
+    }
+    
+    static getName(uid) {
+        return player_names[uid] || null;
+    }
+    
+    static getFightPoint(uid) {
+        return player_fight_points[uid] || null;
+    }
+    
+    static getProfessionId(uid) {
+        return player_profession_ids[uid] || null;
+    }
+    
+    static getDisplayName(uid) {
+        // 如果是当前玩家，显示"你"
+        if (user_uid && uid === user_uid.toString()) {
+            return '你';
+        }
+        // 如果有昵称则显示昵称，否则显示UID
+        return player_names[uid] || uid;
+    }
+    
+    static getAllUserData() {
+        const result = {};
+        const allUids = new Set([
+            ...Object.keys(player_names),
+            ...Object.keys(player_fight_points),
+            ...Object.keys(player_profession_ids)
+        ]);
+        
+        for (const uid of allUids) {
+            result[uid] = {
+                name: player_names[uid] || null,
+                fightPoint: player_fight_points[uid] || null,
+                professionId: player_profession_ids[uid] || null,
+                displayName: this.getDisplayName(uid)
+            };
+        }
+        
+        return result;
+    }
+    
+    // 获取单个用户数据，兼容 PacketProcessor 接口
+    static getUser(uid) {
+        return {
+            name: player_names[uid] || null,
+            fightPoint: player_fight_points[uid] || null,
+            professionId: player_profession_ids[uid] || null,
+            displayName: this.getDisplayName(uid)
+        };
+    }
+    
+    // 添加伤害数据的方法，兼容 packet.js 接口
+    static addDamage(uid, skillId, damage, isCrit, isLucky, hpLessenValue) {
+        if (!total_damage[uid]) {
+            total_damage[uid] = {
+                normal: 0,
+                critical: 0,
+                lucky: 0,
+                crit_lucky: 0,
+                hpLessen: 0,
+                total: 0
+            };
+            total_count[uid] = {
+                normal: 0,
+                critical: 0,
+                lucky: 0,
+                total: 0
+            };
+            dps_window[uid] = [];
+            damage_time[uid] = [];
+            realtime_dps[uid] = 0;
+        }
+        
+        // 根据伤害类型分类统计
+        if (isCrit && isLucky) {
+            total_damage[uid].crit_lucky += damage;
+        } else if (isCrit) {
+            total_damage[uid].critical += damage;
+            total_count[uid].critical++;
+        } else if (isLucky) {
+            total_damage[uid].lucky += damage;
+            total_count[uid].lucky++;
+        } else {
+            total_damage[uid].normal += damage;
+            total_count[uid].normal++;
+        }
+        
+        if (hpLessenValue) {
+            total_damage[uid].hpLessen += hpLessenValue;
+        }
+        
+        total_damage[uid].total += damage;
+        total_count[uid].total++;
+        
+        // 确保数组存在（可能被数据清理定时器删除）
+        if (!dps_window[uid]) {
+            dps_window[uid] = [];
+        }
+        if (!damage_time[uid]) {
+            damage_time[uid] = [];
+        }
+        
+        const now = Date.now();
+        dps_window[uid].push({ damage, time: now, isCrit, isLucky, hpLessenValue });
+        damage_time[uid].push(now);
+        
+        // 记录技能伤害统计
+        if (skillId) {
+            // 记录技能ID到player_skills数组（用于职业识别）
+            if (!player_skills[uid]) {
+                player_skills[uid] = new Set();
+            }
+            player_skills[uid].add(skillId);
+            
+            if (!skill_damage_stats[uid]) {
+                skill_damage_stats[uid] = {};
+            }
+            if (!skill_damage_stats[uid][skillId]) {
+                skill_damage_stats[uid][skillId] = { total: 0, count: 0, critCount: 0, luckyCount: 0 };
+            }
+            skill_damage_stats[uid][skillId].total += damage;
+            skill_damage_stats[uid][skillId].count++;
+            if (isCrit) skill_damage_stats[uid][skillId].critCount++;
+            if (isLucky) skill_damage_stats[uid][skillId].luckyCount++;
+            
+            // 记录技能使用次数统计
+            if (!skill_count_stats[uid]) {
+                skill_count_stats[uid] = {};
+            }
+            if (!skill_count_stats[uid][skillId]) {
+                skill_count_stats[uid][skillId] = 0;
+            }
+            skill_count_stats[uid][skillId]++;
+        }
+    }
+    
+    // 添加治疗数据的方法，兼容 packet.js 接口
+    static addHealing(uid, skillId, healing, isCrit, isLucky) {
+        if (!total_healing[uid]) {
+            total_healing[uid] = {
+                normal: 0,
+                critical: 0,
+                lucky: 0,
+                total: 0
+            };
+            healing_count[uid] = {
+                normal: 0,
+                critical: 0,
+                lucky: 0,
+                total: 0
+            };
+            hps_window[uid] = [];
+            healing_time[uid] = [];
+            realtime_hps[uid] = 0;
+        }
+        
+        // 根据治疗类型分类统计
+        if (isCrit) {
+            total_healing[uid].critical += healing;
+            healing_count[uid].critical++;
+        } else if (isLucky) {
+            total_healing[uid].lucky += healing;
+            healing_count[uid].lucky++;
+        } else {
+            total_healing[uid].normal += healing;
+            healing_count[uid].normal++;
+        }
+        
+        total_healing[uid].total += healing;
+        healing_count[uid].total++;
+        
+        // 确保数组存在（可能被数据清理定时器删除）
+        if (!hps_window[uid]) {
+            hps_window[uid] = [];
+        }
+        if (!healing_time[uid]) {
+            healing_time[uid] = [];
+        }
+        
+        const now = Date.now();
+        hps_window[uid].push({ healing, time: now, isCrit, isLucky });
+        healing_time[uid].push(now);
+        
+        // 记录技能治疗统计
+        if (skillId) {
+            // 记录技能ID到player_skills数组（用于职业识别）
+            if (!player_skills[uid]) {
+                player_skills[uid] = new Set();
+            }
+            player_skills[uid].add(skillId);
+            
+            if (!skill_healing_stats[uid]) {
+                skill_healing_stats[uid] = {};
+            }
+            if (!skill_healing_stats[uid][skillId]) {
+                skill_healing_stats[uid][skillId] = { total: 0, count: 0, critCount: 0, luckyCount: 0 };
+            }
+            skill_healing_stats[uid][skillId].total += healing;
+            skill_healing_stats[uid][skillId].count++;
+            if (isCrit) skill_healing_stats[uid][skillId].critCount++;
+            if (isLucky) skill_healing_stats[uid][skillId].luckyCount++;
+            
+            // 记录技能使用次数统计
+            if (!skill_count_stats[uid]) {
+                skill_count_stats[uid] = {};
+            }
+            if (!skill_count_stats[uid][skillId]) {
+                skill_count_stats[uid][skillId] = 0;
+            }
+            skill_count_stats[uid][skillId]++;
+        }
+    }
+    
+    // 添加承受伤害数据的方法，兼容 packet.js 接口
+    static addTakenDamage(uid, damage, skillId) {
+        // 这里可以根据需要添加承受伤害的统计逻辑
+        // 目前暂时不做特殊处理，可以后续扩展
+    }
+}
+
+// 初始化 PacketProcessor 实例
+packetProcessor = new PacketProcessor({ logger, userDataManager: UserDataManager });
 
 // 创建主窗口
 function createWindow() {
@@ -308,7 +565,7 @@ function createRankingOverlayWindow() {
     }
 
     rankingOverlayWindow = new BrowserWindow({
-        width: 300,
+        width: 350,
         height: 145,
         frame: false,
         transparent: true,
@@ -399,295 +656,61 @@ function getDeviceList() {
 
 // 数据处理函数
 function processPacket(buf) {
+    // 如果不在抓包状态，直接返回
+    if (!isCapturing) {
+        return;
+    }
+    
     try {
-        if (buf.length < 32) return;
+        // 使用 PacketProcessor 处理数据包
+        packetProcessor.processPacket(buf);
         
-        if (buf[4] & 0x80) { // zstd压缩
-            if (!zlib.zstdDecompressSync) {
-                logger.warn('zstdDecompressSync不可用! 请检查Node.js版本!');
-                return;
-            }
-            const decompressed = zlib.zstdDecompressSync(buf.subarray(10));
-            buf = Buffer.concat([buf.subarray(0, 10), decompressed]);
-        }
-
-        const data = buf.subarray(10);
-        if (data.length) {
-            const stream = Readable.from(data, { objectMode: false });
-            let data1;
-            
-            do {
-                const len_buf = stream.read(4);
-                if (!len_buf) break;
-                data1 = stream.read(len_buf.readUInt32BE() - 4);
+        // 检查 UID 是否发生变化
+        if (packetProcessor.hasUserUidChanged()) {
+            const newUid = packetProcessor.getCurrentUserUid();
+            if (newUid && user_uid !== newUid) {
+                user_uid = newUid;
+                logger.info('Player UID obtained: ' + user_uid);
                 
-                try {
-                    let body = pb.decode(data1.subarray(18)) || {};
-                    
-                    if (data1[17] === 0x2e) {
-                        body = body[1];
-                        if (body[5]) {
-                            // 玩家UID
-                            const uid = BigInt(body[5]) >> 16n;
-                            if (user_uid !== uid) {
-                                user_uid = uid;
-                                logger.info('Player UID obtained: ' + user_uid);
-                                // 通知渲染进程
-                                if (mainWindow && mainWindow.webContents) {
-                                    mainWindow.webContents.send('player-uid-updated', user_uid.toString());
-                                    logger.info('Sending UID update to main window: ' + user_uid.toString());
-                                } else {
-                                    logger.warn('Main window not available for UID update');
-                                }
-                                // 通知悬浮窗
-                                logger.info('Checking overlay window status: overlayWindow=' + !!overlayWindow + ', webContents=' + !!(overlayWindow && overlayWindow.webContents));
-                                if (overlayWindow && overlayWindow.webContents) {
-                                    overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
-                                    logger.info('Sending UID update to overlay window: ' + user_uid.toString());
-                                } else {
-                                    logger.warn('Overlay window not available for UID update, overlayWindow=' + !!overlayWindow + ', webContents=' + !!(overlayWindow && overlayWindow.webContents));
-                                    logger.warn('Creating overlay window...');
-                                    // 如果悬浮窗不存在，自动创建悬浮窗
-                                    createOverlayWindow();
-                                    // 等待悬浮窗加载完成后再发送UID
-                                    setTimeout(() => {
-                                        if (overlayWindow && overlayWindow.webContents) {
-                                            overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
-                                            logger.info('Sending UID update to newly created overlay window: ' + user_uid.toString());
-                                        } else {
-                                            logger.error('Failed to create overlay window or webContents not ready');
-                                        }
-                                    }, 1000);
-                                }
-                                // 通知DPS排行榜悬浮窗
-                                if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
-                                    rankingOverlayWindow.webContents.send('player-uid-updated', user_uid.toString());
-                                    logger.info('Sending UID update to ranking overlay window: ' + user_uid.toString());
-                                }
-                            } else {
-                                logger.debug('UID unchanged, current UID: ' + user_uid);
-                            }
-                        }
-                    }
-
-                    let body1 = body[1];
-                    if (body1) {
-                        if (!Array.isArray(body1)) body1 = [body1];
-                        
-                        for (const b of body1) {
-                            if (b[7] && b[7][2]) {
-                                logger.debug(b.toBase64());
-                                const hits = Array.isArray(b[7][2]) ? b[7][2] : [b[7][2]];
-                                
-                                for (const hit of hits) {
-                                    const skill = hit[12];
-                                    if (typeof skill !== 'number') break;
-                                    
-                                    const value = hit[6];
-                                    const luckyValue = hit[8];
-                                    const isMiss = hit[2];
-                                    const isCrit = hit[5];
-                                    const hpLessenValue = hit[9] ?? 0;
-                                    const rawValue = value ?? luckyValue;
-                                    
-                                    //看起来HealFlag不为undefined时即为治疗
-                                    const damageType = hit[1];     // 可能的伤害类型
-                                    const actionType = hit[3];     // 可能的动作类型
-                                    const healFlag = hit[4];       // 可能的治疗标识
-                                    const elementType = hit[7];    // 可能的元素类型
-                                    const targetType = hit[10];    // 可能的目标类型
-                                    
-                                    // 检查治疗标识
-                                    let isHealing = healFlag !== undefined && healFlag !== null && healFlag !== 0;
-                                    
-                                    const damage = isHealing ? 0 : Math.abs(rawValue);
-                                    const healing = isHealing ? Math.abs(rawValue) : 0;
-                                    
-                                    // 详细调试输出，帮助分析数据结构
-                                    if (rawValue !== 0) {
-                                        logger.debug(`Hit detailed data: skill=${skill}, value=${value}, luckyValue=${luckyValue}, damageType=${damageType}, actionType=${actionType}, healFlag=${healFlag}, elementType=${elementType}, targetType=${targetType}, rawValue=${rawValue}, isHealing=${isHealing}`);
-                                    }
-                                    
-                                    const is_player = (BigInt(hit[21] || hit[11]) & 0xffffn) === 640n;
-                                    if (!is_player) break; // 排除怪物攻击
-                                    
-                                    const operator_uid = BigInt(hit[21] || hit[11]) >> 16n;
-                                    if (!operator_uid) break;
-                                    
-                                    // 记录玩家技能信息（用于职业识别）
-                                    if (!player_skills[operator_uid]) {
-                                        player_skills[operator_uid] = new Set();
-                                    }
-                                    player_skills[operator_uid].add(skill);
-                                    
-                                    // 初始化伤害数据结构
-                                    if (!total_damage[operator_uid]) {
-                                        total_damage[operator_uid] = {
-                                            normal: 0,
-                                            critical: 0,
-                                            lucky: 0,
-                                            crit_lucky: 0,
-                                            hpLessen: 0,
-                                            total: 0,
-                                        };
-                                    }
-                                    
-                                    if (!total_count[operator_uid]) {
-                                        total_count[operator_uid] = {
-                                            normal: 0,
-                                            critical: 0,
-                                            lucky: 0,
-                                            total: 0,
-                                        };
-                                    }
-                                    
-                                    // 初始化治疗数据结构
-                                    if (!total_healing[operator_uid]) {
-                                        total_healing[operator_uid] = {
-                                            normal: 0,
-                                            critical: 0,
-                                            lucky: 0,
-                                            crit_lucky: 0,
-                                            total: 0,
-                                        };
-                                    }
-                                    
-                                    if (!healing_count[operator_uid]) {
-                                        healing_count[operator_uid] = {
-                                            normal: 0,
-                                            critical: 0,
-                                            lucky: 0,
-                                            total: 0,
-                                        };
-                                    }
-                                    
-                                    // 确保所有伤害字段都存在
-                                    if (typeof total_damage[operator_uid].normal === 'undefined') total_damage[operator_uid].normal = 0;
-                                    if (typeof total_damage[operator_uid].critical === 'undefined') total_damage[operator_uid].critical = 0;
-                                    if (typeof total_damage[operator_uid].lucky === 'undefined') total_damage[operator_uid].lucky = 0;
-                                    if (typeof total_damage[operator_uid].crit_lucky === 'undefined') total_damage[operator_uid].crit_lucky = 0;
-                                    if (typeof total_damage[operator_uid].hpLessen === 'undefined') total_damage[operator_uid].hpLessen = 0;
-                                    if (typeof total_damage[operator_uid].total === 'undefined') total_damage[operator_uid].total = 0;
-                                    
-                                    if (typeof total_count[operator_uid].normal === 'undefined') total_count[operator_uid].normal = 0;
-                                    if (typeof total_count[operator_uid].critical === 'undefined') total_count[operator_uid].critical = 0;
-                                    if (typeof total_count[operator_uid].lucky === 'undefined') total_count[operator_uid].lucky = 0;
-                                    if (typeof total_count[operator_uid].total === 'undefined') total_count[operator_uid].total = 0;
-                                    
-                                    // 确保所有治疗字段都存在
-                                    if (typeof total_healing[operator_uid].normal === 'undefined') total_healing[operator_uid].normal = 0;
-                                    if (typeof total_healing[operator_uid].critical === 'undefined') total_healing[operator_uid].critical = 0;
-                                    if (typeof total_healing[operator_uid].lucky === 'undefined') total_healing[operator_uid].lucky = 0;
-                                    if (typeof total_healing[operator_uid].crit_lucky === 'undefined') total_healing[operator_uid].crit_lucky = 0;
-                                    if (typeof total_healing[operator_uid].total === 'undefined') total_healing[operator_uid].total = 0;
-                                    
-                                    if (typeof healing_count[operator_uid].normal === 'undefined') healing_count[operator_uid].normal = 0;
-                                    if (typeof healing_count[operator_uid].critical === 'undefined') healing_count[operator_uid].critical = 0;
-                                    if (typeof healing_count[operator_uid].lucky === 'undefined') healing_count[operator_uid].lucky = 0;
-                                    if (typeof healing_count[operator_uid].total === 'undefined') healing_count[operator_uid].total = 0;
-                                    
-                                    // 计算伤害统计
-                                    if (damage > 0) {
-                                        if (isCrit) {
-                                            total_count[operator_uid].critical++;
-                                            if (luckyValue) {
-                                                total_damage[operator_uid].crit_lucky += damage;
-                                                total_count[operator_uid].lucky++;
-                                            } else {
-                                                total_damage[operator_uid].critical += damage;
-                                            }
-                                        } else if (luckyValue) {
-                                            total_damage[operator_uid].lucky += damage;
-                                            total_count[operator_uid].lucky++;
-                                        } else {
-                                            total_damage[operator_uid].normal += damage;
-                                            total_count[operator_uid].normal++;
-                                        }
-                                        
-                                        total_damage[operator_uid].total += damage;
-                                        total_damage[operator_uid].hpLessen += hpLessenValue;
-                                        total_count[operator_uid].total++;
-                                    }
-                                    
-                                    // 计算治疗统计
-                                    if (healing > 0) {
-                                        if (isCrit) {
-                                            healing_count[operator_uid].critical++;
-                                            if (luckyValue) {
-                                                total_healing[operator_uid].crit_lucky += healing;
-                                                healing_count[operator_uid].lucky++;
-                                            } else {
-                                                total_healing[operator_uid].critical += healing;
-                                            }
-                                        } else if (luckyValue) {
-                                            total_healing[operator_uid].lucky += healing;
-                                            healing_count[operator_uid].lucky++;
-                                        } else {
-                                            total_healing[operator_uid].normal += healing;
-                                            healing_count[operator_uid].normal++;
-                                        }
-                                        
-                                        total_healing[operator_uid].total += healing;
-                                        healing_count[operator_uid].total++;
-                                    }
-                                    
-                                    // DPS窗口数据
-                    if (!dps_window[operator_uid]) dps_window[operator_uid] = [];
-                    dps_window[operator_uid].push({
-                        time: Date.now(),
-                        damage,
-                    });
-                    
-                    // HPS窗口数据
-                    if (healing > 0) {
-                        if (!hps_window[operator_uid]) hps_window[operator_uid] = [];
-                        hps_window[operator_uid].push({
-                            time: Date.now(),
-                            healing,
-                        });
-                    }
-                                    
-                                    // 治疗时间统计
-                                    if (healing > 0) {
-                                        if (!healing_time[operator_uid]) healing_time[operator_uid] = [];
-                                        if (healing_time[operator_uid][0]) {
-                                            healing_time[operator_uid][1] = Date.now();
-                                        } else {
-                                            healing_time[operator_uid][0] = Date.now();
-                                        }
-                                    }
-                                    
-                                    // 记录时间
-                                    if (!damage_time[operator_uid]) damage_time[operator_uid] = [];
-                                    if (damage_time[operator_uid][0]) {
-                                        damage_time[operator_uid][1] = Date.now();
-                                    } else {
-                                        damage_time[operator_uid][0] = Date.now();
-                                    }
-                                    
-                                    let extra = [];
-                                    if (isCrit) extra.push('Critical');
-                    if (luckyValue) extra.push('Lucky');
-                    if (extra.length === 0) extra = ['Normal'];
-                                    
-                                    if (damage > 0) {
-                        logger.info(`User: ${operator_uid} Skill: ${skill} Damage: ${damage} HP Reduced: ${hpLessenValue} Type: ${extra.join('|')}`);
-                    }
-                    if (healing > 0) {
-                        logger.info(`User: ${operator_uid} Skill: ${skill} Healing: ${healing} Type: ${extra.join('|')}`);
-                    }
-                                }
-                            }
-                        }
-                    }
-                } catch (e) {
-                    logger.debug(e);
-                    logger.debug(data1.subarray(18).toString('hex'));
+                // 通知渲染进程
+                if (mainWindow && mainWindow.webContents) {
+                    mainWindow.webContents.send('player-uid-updated', user_uid.toString());
+                    logger.info('Sending UID update to main window: ' + user_uid.toString());
+                } else {
+                    logger.warn('Main window not available for UID update');
                 }
-            } while (data1 && data1.length);
+                
+                // 通知悬浮窗
+                logger.info('Checking overlay window status: overlayWindow=' + !!overlayWindow + ', webContents=' + !!(overlayWindow && overlayWindow.webContents));
+                if (overlayWindow && overlayWindow.webContents) {
+                    overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                    logger.info('Sending UID update to overlay window: ' + user_uid.toString());
+                } else {
+                    logger.warn('Overlay window not available for UID update, overlayWindow=' + !!overlayWindow + ', webContents=' + !!(overlayWindow && overlayWindow.webContents));
+                    logger.warn('Creating overlay window...');
+                    // 如果悬浮窗不存在，自动创建悬浮窗
+                    createOverlayWindow();
+                    // 等待悬浮窗加载完成后再发送UID
+                    setTimeout(() => {
+                        if (overlayWindow && overlayWindow.webContents) {
+                            overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                            logger.info('Sending UID update to newly created overlay window: ' + user_uid.toString());
+                        } else {
+                            logger.error('Failed to create overlay window or webContents not ready');
+                        }
+                    }, 1000);
+                }
+                
+                // 通知DPS排行榜悬浮窗
+                if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+                    rankingOverlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                    logger.info('Sending UID update to ranking overlay window: ' + user_uid.toString());
+                }
+            }
         }
+        
     } catch (e) {
-        logger.debug(e);
+        logger.debug('Error in processPacket:', e);
     }
 }
 
@@ -713,13 +736,13 @@ function startCapture(deviceIndex) {
         }
 
         selectedDevice = device;
-        const c = new Cap();
+        capInstance = new Cap();
         const filter = 'ip and tcp';
         const bufSize = 50 * 1024 * 1024; // 增加到50MB缓冲区
         const buffer = Buffer.alloc(65535);
         
-        const linkType = c.open(device.name, filter, bufSize, buffer);
-        c.setMinBytes && c.setMinBytes(0);
+        const linkType = capInstance.open(device.name, filter, bufSize, buffer);
+        capInstance.setMinBytes && capInstance.setMinBytes(0);
 
         logger.info(`Starting packet capture on device: ${device.description}`);
         isCapturing = true;
@@ -736,7 +759,7 @@ function startCapture(deviceIndex) {
             });
         }
 
-        c.on('packet', async function (nbytes, trunc) {
+        capInstance.on('packet', async function (nbytes, trunc) {
             // 性能监控
             packet_count++;
             const now = Date.now();
@@ -781,6 +804,26 @@ function startCapture(deviceIndex) {
                         
                         if (current_server !== src_server) {
                             try {
+                                // 尝试通过登录返回包识别服务器(仍需测试)
+                                if (buf.length === 0x62) {
+                                    const signature = Buffer.from([
+                                        0x00, 0x00, 0x00, 0x62,
+                                        0x00, 0x03,
+                                        0x00, 0x00, 0x00, 0x01,
+                                        0x00, 0x11, 0x45, 0x14,//seq?
+                                        0x00, 0x00, 0x00, 0x00,
+                                        0x0a, 0x4e, 0x08, 0x01, 0x22, 0x24
+                                    ]);
+                                    if (Buffer.compare(buf.subarray(0, 10), signature.subarray(0, 10)) === 0 &&
+                                        Buffer.compare(buf.subarray(14, 14 + 6), signature.subarray(14, 14 + 6)) === 0) {
+                                        if (current_server !== src_server) {
+                                            current_server = src_server;
+                                            clearTcpCache();
+                                            logger.info('Got Scene Server Address by Login Return Packet: ' + src_server);
+                                        }
+                                    }
+                                }
+                                
                                 // 尝试通过小包识别服务器
                                 if (buf[4] == 0) {
                                     const data = buf.subarray(10);
@@ -847,6 +890,11 @@ function startCapture(deviceIndex) {
                         
                         // TCP包重组处理 - 使用异步处理避免阻塞
                         setImmediate(async () => {
+                            // 如果不在抓包状态，直接返回
+                            if (!isCapturing) {
+                                return;
+                            }
+                            
                             try {
                                 await tcp_lock.acquire();
                                 
@@ -919,6 +967,18 @@ function startCapture(deviceIndex) {
 function stopCapture() {
     isCapturing = false;
     
+    // 关闭Cap实例
+    if (capInstance) {
+        try {
+            capInstance.close();
+            capInstance = null;
+            logger.info('Cap instance closed successfully');
+        } catch (error) {
+            logger.error('Error closing cap instance:', error);
+            capInstance = null;
+        }
+    }
+    
     // 停止数据更新定时器
     stopDataUpdateTimers();
     
@@ -948,6 +1008,9 @@ function clearStats() {
     realtime_dps = {};
     realtime_hps = {};
     player_skills = {};
+    skill_damage_stats = {};
+    skill_healing_stats = {};
+    skill_count_stats = {};
     
     // 立即发送空数据到渲染进程，清除界面显示
     const emptyData = {};
@@ -1071,15 +1134,23 @@ function startDataUpdateTimers() {
                     total: 0,
                 };
                 
-                // 修复总DPS计算，确保时间差有效
-                if (damage_time[uid] && damage_time[uid][1] && damage_time[uid][0] && damage_time[uid][1] > damage_time[uid][0]) {
-                    userData[uid].total_dps = (total_damage[uid].total / (damage_time[uid][1] - damage_time[uid][0]) * 1000) || 0;
+                // 修复总DPS计算，使用整个战斗时间
+                if (damage_time[uid] && damage_time[uid].length >= 2) {
+                    const firstTime = damage_time[uid][0];
+                    const lastTime = damage_time[uid][damage_time[uid].length - 1];
+                    const timeDiff = lastTime - firstTime;
+                    if (timeDiff >= 1000) { // 至少1秒的时间差
+                        userData[uid].total_dps = (total_damage[uid].total / timeDiff * 1000) || 0;
+                    } else {
+                        userData[uid].total_dps = 0;
+                    }
                 } else {
                     userData[uid].total_dps = 0;
                 }
                 
                 userData[uid].realtime_dps = realtime_dps[uid] ? realtime_dps[uid].value : 0;
                 userData[uid].realtime_dps_max = realtime_dps[uid] ? realtime_dps[uid].max : 0;
+                userData[uid].damage_time = damage_time[uid] || [];
             }
             
             // 治疗数据
@@ -1092,9 +1163,16 @@ function startDataUpdateTimers() {
                     total: 0,
                 };
                 
-                // 计算总HPS
-                if (healing_time[uid] && healing_time[uid][1] && healing_time[uid][0] && healing_time[uid][1] > healing_time[uid][0]) {
-                    userData[uid].total_hps = (total_healing[uid].total / (healing_time[uid][1] - healing_time[uid][0]) * 1000) || 0;
+                // 计算总HPS，使用整个治疗时间
+                if (healing_time[uid] && healing_time[uid].length >= 2) {
+                    const firstTime = healing_time[uid][0];
+                    const lastTime = healing_time[uid][healing_time[uid].length - 1];
+                    const timeDiff = lastTime - firstTime;
+                    if (timeDiff >= 1000) { // 至少1秒的时间差
+                        userData[uid].total_hps = (total_healing[uid].total / timeDiff * 1000) || 0;
+                    } else {
+                        userData[uid].total_hps = 0;
+                    }
                 } else {
                     userData[uid].total_hps = 0;
                 }
@@ -1109,6 +1187,17 @@ function startDataUpdateTimers() {
             } else {
                 userData[uid].skills = [];
             }
+            
+            // 添加技能统计数据
+            userData[uid].skill_damage_stats = skill_damage_stats[uid] || {};
+            userData[uid].skill_healing_stats = skill_healing_stats[uid] || {};
+            userData[uid].skill_count_stats = skill_count_stats[uid] || {};
+            
+            // 添加用户数据信息
+            userData[uid].playerName = UserDataManager.getName(uid);
+            userData[uid].playerFightPoint = UserDataManager.getFightPoint(uid);
+            userData[uid].professionId = UserDataManager.getProfessionId(uid);
+            userData[uid].displayName = UserDataManager.getDisplayName(uid);
         }
         
         // 发送到主窗口
@@ -1136,7 +1225,12 @@ function startDataUpdateTimers() {
                         totalDamage: total_damage[uid].total,
                         skills: Array.from(player_skills[uid] || []),
                         // 添加实时DPS
-                        realtimeDps: realtime_dps[uid] ? realtime_dps[uid].value : 0
+                        realtimeDps: realtime_dps[uid] ? realtime_dps[uid].value : 0,
+                        // 添加用户数据信息
+                        playerName: UserDataManager.getName(uid),
+                        playerFightPoint: UserDataManager.getFightPoint(uid),
+                        professionId: UserDataManager.getProfessionId(uid),
+                        displayName: UserDataManager.getDisplayName(uid)
                     };
                 }
             });
@@ -1395,15 +1489,23 @@ ipcMain.handle('get-stats-data', () => {
                 total: 0,
             };
             
-            // 修复总DPS计算，确保时间差有效
-            if (damage_time[uid] && damage_time[uid][1] && damage_time[uid][0] && damage_time[uid][1] > damage_time[uid][0]) {
-                userData[uid].total_dps = (total_damage[uid].total / (damage_time[uid][1] - damage_time[uid][0]) * 1000) || 0;
+            // 修复总DPS计算，使用整个战斗时间
+            if (damage_time[uid] && damage_time[uid].length >= 2) {
+                const firstTime = damage_time[uid][0];
+                const lastTime = damage_time[uid][damage_time[uid].length - 1];
+                const timeDiff = lastTime - firstTime;
+                if (timeDiff > 0) {
+                    userData[uid].total_dps = (total_damage[uid].total / timeDiff * 1000) || 0;
+                } else {
+                    userData[uid].total_dps = 0;
+                }
             } else {
                 userData[uid].total_dps = 0;
             }
             
             userData[uid].realtime_dps = realtime_dps[uid] ? realtime_dps[uid].value : 0;
             userData[uid].realtime_dps_max = realtime_dps[uid] ? realtime_dps[uid].max : 0;
+            userData[uid].damage_time = damage_time[uid] || [];
         }
         
         // 治疗数据
@@ -1416,9 +1518,16 @@ ipcMain.handle('get-stats-data', () => {
                 total: 0,
             };
             
-            // 计算总HPS
-            if (healing_time[uid] && healing_time[uid][1] && healing_time[uid][0] && healing_time[uid][1] > healing_time[uid][0]) {
-                userData[uid].total_hps = (total_healing[uid].total / (healing_time[uid][1] - healing_time[uid][0]) * 1000) || 0;
+            // 计算总HPS，使用整个治疗时间
+            if (healing_time[uid] && healing_time[uid].length >= 2) {
+                const firstTime = healing_time[uid][0];
+                const lastTime = healing_time[uid][healing_time[uid].length - 1];
+                const timeDiff = lastTime - firstTime;
+                if (timeDiff > 0) {
+                    userData[uid].total_hps = (total_healing[uid].total / timeDiff * 1000) || 0;
+                } else {
+                    userData[uid].total_hps = 0;
+                }
             } else {
                 userData[uid].total_hps = 0;
             }
@@ -1432,6 +1541,25 @@ ipcMain.handle('get-stats-data', () => {
             userData[uid].skills = Array.from(player_skills[uid]);
         } else {
             userData[uid].skills = [];
+        }
+        
+        // 添加按技能ID统计的详细数据
+        if (skill_damage_stats[uid]) {
+            userData[uid].skill_damage_stats = skill_damage_stats[uid];
+        } else {
+            userData[uid].skill_damage_stats = {};
+        }
+        
+        if (skill_healing_stats[uid]) {
+            userData[uid].skill_healing_stats = skill_healing_stats[uid];
+        } else {
+            userData[uid].skill_healing_stats = {};
+        }
+        
+        if (skill_count_stats[uid]) {
+            userData[uid].skill_count_stats = skill_count_stats[uid];
+        } else {
+            userData[uid].skill_count_stats = {};
         }
     }
     
@@ -1454,6 +1582,20 @@ ipcMain.handle('toggle-self-only-mode', (event, enabled) => {
     }
     logger.info(`Self-only mode ${enabled ? 'enabled' : 'disabled'}`);
     return enabled;
+});
+
+// 用户数据管理相关的IPC处理程序
+ipcMain.handle('get-user-data', (event, uid) => {
+    return {
+        name: UserDataManager.getName(uid),
+        fightPoint: UserDataManager.getFightPoint(uid),
+        professionId: UserDataManager.getProfessionId(uid),
+        displayName: UserDataManager.getDisplayName(uid)
+    };
+});
+
+ipcMain.handle('get-all-user-data', () => {
+    return UserDataManager.getAllUserData();
 });
 
 // 应用事件

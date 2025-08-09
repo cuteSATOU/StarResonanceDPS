@@ -139,7 +139,9 @@
                         uid: uid,
                         totalDamage: userData.totalDamage || 0,
                         skills: userData.skills || [],
-                        realtimeDps: userData.realtimeDps || 0
+                        realtimeDps: userData.realtimeDps || 0,
+                        displayName: userData.displayName || uid,
+                        playerFightPoint: userData.playerFightPoint || 0
                     };
                 });
             }
@@ -306,12 +308,14 @@
                     playerClass = ' current-player';
                 }
                 
+                const fightPointText = player.playerFightPoint > 0 ? ` | ${formatNumber(player.playerFightPoint)}` : '';
+                
                 return `
                     <div class="ranking-item${animationClass}${playerClass}" data-rank="${actualRank}">
                         <div class="ranking-info">
                             <span class="rank-number">#${actualRank}</span>
-                            <span class="player-role">${roleName}</span>
-                            <span class="player-uid">${player.uid}</span>
+                            <span class="player-role">${roleName}${fightPointText}</span>
+                            <span class="player-uid" title="UID: ${player.uid}">${player.displayName}</span>
                             <span class="damage-value">${formatNumber(player.totalDamage)} (${formatNumber(player.realtimeDps)}/s)</span>
                         </div>
 
