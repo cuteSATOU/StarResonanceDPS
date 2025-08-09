@@ -699,6 +699,16 @@ async function initializeStatus() {
         const overlayStatus = await ipcRenderer.invoke('get-overlay-status');
         updateOverlayButton(overlayStatus);
         
+        // 检查DPS排行榜悬浮窗状态
+        const rankingOverlayStatus = await ipcRenderer.invoke('get-ranking-overlay-status');
+        updateRankingOverlayButton(rankingOverlayStatus);
+        
+        // 获取selfOnlyMode初始状态
+        const selfOnlyModeStatus = await ipcRenderer.invoke('get-self-only-mode');
+        selfOnlyMode = selfOnlyModeStatus;
+        updateSelfOnlyButton(selfOnlyModeStatus);
+        console.log('主窗口初始化selfOnlyMode状态:', selfOnlyModeStatus);
+        
         if (status.isCapturing) {
             console.info(`正在设备 "${status.selectedDevice}" 上抓包`);
         }

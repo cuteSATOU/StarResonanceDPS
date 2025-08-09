@@ -185,7 +185,7 @@
         let showDetailsDefaultCheckbox, hideHpsDisplayCheckbox;
 
         // 初始化
-        function initializeOverlay() {
+        async function initializeOverlay() {
             // 获取DOM元素
             realtimeDps = document.getElementById('realtimeDps');
             maxDps = document.getElementById('maxDps');
@@ -229,7 +229,7 @@
             hideHpsDisplayCheckbox = document.getElementById('hideHpsDisplay');
 
             bindEvents();
-            loadSettings();
+            await loadSettings();
             updatePinButton();
             
             // 确保详细统计默认展开
@@ -448,6 +448,12 @@
                 statsData = {};
                 updateDpsDisplay();
             });
+            
+            // 接收悬浮窗配置更新
+            ipcRenderer.on('overlay-settings-updated', (event, settings) => {
+                console.log('悬浮窗收到配置更新:', settings);
+                applySettings(settings);
+            });
         }
 
         // 开始数据更新
@@ -519,16 +525,26 @@
             setTimeout(() => {
                 const container = document.querySelector('.overlay-container');
                 if (container) {
-                    const rect = container.getBoundingClientRect();
-                    const newWidth = Math.max(280, Math.min(500, rect.width + 20)); // 添加一些边距
-                    const newHeight = Math.max(200, Math.min(800, rect.height + 20));
+                    // 获取容器的实际内容高度和宽度
+                    const containerRect = container.getBoundingClientRect();
+                    const actualHeight = Math.max(container.scrollHeight, containerRect.height);
+                    const actualWidth = Math.max(container.scrollWidth, containerRect.width) || 320;
                     
+                    // 设置最小高度和宽度（确保窗口不会太小）
+                    const minHeight = 200;
+                    const minWidth = 280;
+                    
+                    // 计算最终尺寸，确保不小于最小值，不大于最大值
+                    const finalHeight = Math.max(minHeight, Math.min(800, actualHeight));
+                    const finalWidth = Math.max(minWidth, Math.min(500, actualWidth));
+                    
+                    // 调整窗口大小
                     ipcRenderer.invoke('overlay-resize', {
-                        width: Math.ceil(newWidth),
-                        height: Math.ceil(newHeight)
+                        width: Math.ceil(finalWidth),
+                        height: Math.ceil(finalHeight)
                     });
                 }
-            }, 50);
+            }, 100); // 增加延迟确保DOM完全渲染
         }
 
         // 切换HPS显示
@@ -710,7 +726,7 @@
             }
         }
 
-        // 保存设置
+        // 保存设置到localStorage和main进程
         function saveSettings() {
             const settings = {
                 opacity,
@@ -720,50 +736,109 @@
                 hideHpsDisplay
             };
             localStorage.setItem('overlaySettings', JSON.stringify(settings));
+            // 同时保存到main进程
+            ipcRenderer.invoke('save-overlay-settings', settings);
+            console.log('设置已保存:', settings);
+        }
+        
+        // 应用配置设置
+        function applySettings(settings) {
+            if (settings.opacity !== undefined) {
+                opacity = settings.opacity;
+                opacitySlider.value = opacity;
+                opacityValue.textContent = opacity + '%';
+                document.body.style.opacity = opacity / 100;
+            }
+            if (settings.updateFreency !== undefined) {
+                updateFreency = settings.updateFreency;
+                updateFrequencySelect.value = updateFreency;
+                // 重启数据更新以应用新的频率
+                restartDataUpdate();
+            }
+            if (settings.detailsExpanded !== undefined) {
+                detailsExpanded = settings.detailsExpanded;
+                showDetailsDefaultCheckbox.checked = detailsExpanded;
+                detailsContent.style.display = detailsExpanded ? 'block' : 'none';
+                const arrow = document.querySelector('.details-arrow');
+                if (arrow) {
+                    arrow.textContent = detailsExpanded ? '▼' : '▶';
+                }
+                adjustWindowSize();
+            }
+            if (settings.isPinned !== undefined) {
+                isPinned = settings.isPinned;
+                ipcRenderer.invoke('overlay-set-always-on-top', isPinned);
+                updatePinButton();
+            }
+            if (settings.hideHpsDisplay !== undefined) {
+                hideHpsDisplay = settings.hideHpsDisplay;
+                hideHpsDisplayCheckbox.checked = hideHpsDisplay;
+                toggleHpsDisplay();
+                adjustWindowSize();
+            }
         }
 
-        // 加载设置
-        function loadSettings() {
+        // 从main进程或localStorage加载设置
+        async function loadSettings() {
+            try {
+                // 优先从main进程获取配置
+                const mainSettings = await ipcRenderer.invoke('get-overlay-settings');
+                if (mainSettings) {
+                    console.log('从main进程加载设置:', mainSettings);
+                    applySettings(mainSettings);
+                    return;
+                }
+            } catch (error) {
+                console.log('从main进程获取设置失败，尝试从localStorage加载:', error);
+            }
+            
+            // 如果main进程没有配置，则从localStorage加载
             try {
                 const settings = JSON.parse(localStorage.getItem('overlaySettings') || '{}');
-                
-                if (settings.opacity !== undefined) {
-                    opacity = settings.opacity;
-                    opacitySlider.value = opacity;
-                    opacityValue.textContent = opacity + '%';
-                    document.body.style.opacity = opacity / 100;
-                }
-                
-                if (settings.updateFreency !== undefined) {
-                    updateFreency = settings.updateFreency;
-                    updateFrequencySelect.value = updateFreency;
-                }
-                
-                if (settings.detailsExpanded !== undefined) {
-                    detailsExpanded = settings.detailsExpanded;
-                    showDetailsDefaultCheckbox.checked = detailsExpanded;
-                    detailsContent.style.display = detailsExpanded ? 'block' : 'none';
-                    document.querySelector('.details-arrow').textContent = detailsExpanded ? '▼' : '▶';
-                }
-                
-                if (settings.isPinned !== undefined) {
-                    isPinned = settings.isPinned;
-                    ipcRenderer.invoke('overlay-set-always-on-top', isPinned);
-                    updatePinButton();
-                }
-                
-                if (settings.hideHpsDisplay !== undefined) {
-                    hideHpsDisplay = settings.hideHpsDisplay;
-                    hideHpsDisplayCheckbox.checked = hideHpsDisplay;
-                    toggleHpsDisplay();
-                }
+                console.log('从localStorage加载设置:', settings);
+                applySettings(settings);
             } catch (error) {
                 console.error('加载设置失败:', error);
             }
         }
 
+        // 监听窗口大小变化
+        function setupResizeObserver() {
+            if (typeof ResizeObserver !== 'undefined') {
+                const container = document.querySelector('.overlay-container');
+                if (container) {
+                    const resizeObserver = new ResizeObserver(entries => {
+                        // 当容器大小发生变化时，调整窗口大小
+                        adjustWindowSize();
+                    });
+                    resizeObserver.observe(container);
+                }
+            }
+        }
+        
+        // 监听内容变化
+        function setupMutationObserver() {
+            const overlayContent = document.querySelector('.overlay-content');
+            if (overlayContent) {
+                const mutationObserver = new MutationObserver(mutations => {
+                    // 当内容发生变化时，调整窗口大小
+                    adjustWindowSize();
+                });
+                mutationObserver.observe(overlayContent, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['style', 'class']
+                });
+            }
+        }
+
         // 页面加载完成后初始化
-        document.addEventListener('DOMContentLoaded', initializeOverlay);
+        document.addEventListener('DOMContentLoaded', async function() {
+            await initializeOverlay();
+            setupResizeObserver();
+            setupMutationObserver();
+        });
 
         // 页面卸载时清理
         window.addEventListener('beforeunload', () => {

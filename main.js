@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, globalShortcut } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const cap = require('cap');
 const winston = require("winston");
 const zlib = require('zlib');
@@ -70,6 +71,26 @@ let logQueue = [];
 let dataCleanupInterval;
 let statsUpdateInterval;
 
+// 配置文件路径
+const configPath = path.join(app.getPath('userData'), 'config.json');
+
+// 默认配置
+const defaultConfig = {
+    overlayEnabled: false,
+    rankingOverlayEnabled: false,
+    selfOnlyMode: false,
+    overlaySettings: {
+        opacity: 90,
+        updateFreency: 250,
+        detailsExpanded: true,
+        isPinned: true,
+        hideHpsDisplay: false
+    }
+};
+
+// 当前配置
+let appConfig = { ...defaultConfig };
+
 // 自定义传输器，将日志发送到渲染进程
 class ElectronTransport extends winston.transports.Console {
     log(info, callback) {
@@ -108,7 +129,7 @@ function flushLogQueue() {
 
 // 日志配置
 const logger = winston.createLogger({
-    level: 'warning',
+    level: 'info',
     format: winston.format.combine(
         winston.format.colorize({ all: true }),
         winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -149,6 +170,42 @@ class Lock {
 }
 
 const tcp_lock = new Lock();
+
+// 配置管理函数
+function loadConfig() {
+    try {
+        if (fs.existsSync(configPath)) {
+            const configData = fs.readFileSync(configPath, 'utf8');
+            const loadedConfig = JSON.parse(configData);
+            appConfig = { ...defaultConfig, ...loadedConfig };
+            logger.info('配置文件加载成功:', appConfig);
+        } else {
+            logger.info('配置文件不存在，使用默认配置');
+            saveConfig(); // 创建默认配置文件
+        }
+    } catch (error) {
+        logger.error('加载配置文件失败:', error);
+        appConfig = { ...defaultConfig };
+    }
+}
+
+function saveConfig() {
+    try {
+        const configDir = path.dirname(configPath);
+        if (!fs.existsSync(configDir)) {
+            fs.mkdirSync(configDir, { recursive: true });
+        }
+        fs.writeFileSync(configPath, JSON.stringify(appConfig, null, 2), 'utf8');
+        logger.info('配置文件保存成功:', appConfig);
+    } catch (error) {
+        logger.error('保存配置文件失败:', error);
+    }
+}
+
+function updateConfig(key, value) {
+    appConfig[key] = value;
+    saveConfig();
+}
 
 // 用户数据管理器方法
 class UserDataManager {
@@ -532,7 +589,11 @@ function createOverlayWindow() {
     overlayWindow.on('closed', () => {
         overlayWindow = null;
         overlayEnabled = false;
-        if (mainWindow) {
+        // 只有在不是主窗口关闭导致的情况下才保存配置
+        if (!app.isMainWindowClosing) {
+            updateConfig('overlayEnabled', false);
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('overlay-status-changed', false);
         }
     });
@@ -555,6 +616,11 @@ function createOverlayWindow() {
             if (overlayWindow && overlayWindow.webContents) {
                 overlayWindow.webContents.send('self-only-mode-changed', selfOnlyMode);
                 logger.info('Sending initial self-only mode to overlay window: ' + selfOnlyMode);
+            }
+            // 发送悬浮窗配置
+            if (overlayWindow && overlayWindow.webContents) {
+                overlayWindow.webContents.send('overlay-settings-updated', appConfig.overlaySettings);
+                logger.info('Sending overlay settings to overlay window:', appConfig.overlaySettings);
             }
         }, 500);
     });
@@ -603,7 +669,11 @@ function createRankingOverlayWindow() {
     rankingOverlayWindow.on('closed', () => {
         rankingOverlayWindow = null;
         rankingOverlayEnabled = false;
-        if (mainWindow) {
+        // 只有在不是主窗口关闭导致的情况下才保存配置
+        if (!app.isMainWindowClosing) {
+            updateConfig('rankingOverlayEnabled', false);
+        }
+        if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('ranking-overlay-status-changed', false);
         }
     });
@@ -688,25 +758,12 @@ function processPacket(buf) {
                     logger.warn('Main window not available for UID update');
                 }
                 
-                // 通知悬浮窗
-                logger.info('Checking overlay window status: overlayWindow=' + !!overlayWindow + ', webContents=' + !!(overlayWindow && overlayWindow.webContents));
+                // 通知悬浮窗（仅在悬浮窗已存在时）
                 if (overlayWindow && overlayWindow.webContents) {
                     overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
                     logger.info('Sending UID update to overlay window: ' + user_uid.toString());
                 } else {
-                    logger.warn('Overlay window not available for UID update, overlayWindow=' + !!overlayWindow + ', webContents=' + !!(overlayWindow && overlayWindow.webContents));
-                    logger.warn('Creating overlay window...');
-                    // 如果悬浮窗不存在，自动创建悬浮窗
-                    createOverlayWindow();
-                    // 等待悬浮窗加载完成后再发送UID
-                    setTimeout(() => {
-                        if (overlayWindow && overlayWindow.webContents) {
-                            overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
-                            logger.info('Sending UID update to newly created overlay window: ' + user_uid.toString());
-                        } else {
-                            logger.error('Failed to create overlay window or webContents not ready');
-                        }
-                    }, 1000);
+                    logger.debug('Overlay window not available for UID update, skipping...');
                 }
                 
                 // 通知DPS排行榜悬浮窗
@@ -1027,6 +1084,10 @@ function clearStats() {
     }
     if (overlayWindow && overlayWindow.webContents) {
         overlayWindow.webContents.send('stats-updated', emptyData);
+    }
+    // 向DPS排行榜悬浮窗发送清空事件
+    if (rankingOverlayWindow && rankingOverlayWindow.webContents) {
+        rankingOverlayWindow.webContents.send('stats-cleared');
     }
     
     logger.info('Statistics data cleared (including damage and healing data)');
@@ -1378,6 +1439,15 @@ ipcMain.handle('window-maximize', () => {
 
 ipcMain.handle('window-close', () => {
     if (mainWindow) {
+        // 设置标志表示是主窗口退出导致的关闭
+        app.isMainWindowClosing = true;
+        // 主动关闭悬浮窗，但不保存配置
+        if (overlayWindow) {
+            overlayWindow.close();
+        }
+        if (rankingOverlayWindow) {
+            rankingOverlayWindow.close();
+        }
         mainWindow.close();
     }
 });
@@ -1400,6 +1470,7 @@ ipcMain.handle('toggle-overlay', () => {
         return false;
     } else {
         createOverlayWindow();
+        updateConfig('overlayEnabled', true);
         return true;
     }
 });
@@ -1411,6 +1482,7 @@ ipcMain.handle('toggle-ranking-overlay', () => {
         return false;
     } else {
         createRankingOverlayWindow();
+        updateConfig('rankingOverlayEnabled', true);
         return true;
     }
 });
@@ -1424,6 +1496,12 @@ ipcMain.handle('ranking-overlay-close', () => {
 ipcMain.handle('ranking-overlay-set-always-on-top', (event, alwaysOnTop) => {
     if (rankingOverlayWindow) {
         rankingOverlayWindow.setAlwaysOnTop(alwaysOnTop);
+    }
+});
+
+ipcMain.handle('ranking-overlay-set-ignore-mouse-events', (event, ignore) => {
+    if (rankingOverlayWindow) {
+        rankingOverlayWindow.setIgnoreMouseEvents(ignore, { forward: true });
     }
 });
 
@@ -1598,12 +1676,34 @@ ipcMain.handle('get-overlay-status', () => {
     return overlayEnabled;
 });
 
+ipcMain.handle('get-ranking-overlay-status', () => {
+    return rankingOverlayEnabled;
+});
+
+// 悬浮窗设置管理
+ipcMain.handle('save-overlay-settings', (event, settings) => {
+    appConfig.overlaySettings = { ...appConfig.overlaySettings, ...settings };
+    saveConfig();
+    logger.info('Overlay settings saved:', appConfig.overlaySettings);
+    return true;
+});
+
+ipcMain.handle('get-overlay-settings', () => {
+    return appConfig.overlaySettings;
+});
+
 ipcMain.handle('get-player-uid', () => {
     return user_uid ? user_uid.toString() : null;
 });
 
+ipcMain.handle('get-self-only-mode', () => {
+    return selfOnlyMode;
+});
+
 ipcMain.handle('toggle-self-only-mode', (event, enabled) => {
     selfOnlyMode = enabled;
+    // 保存配置到文件
+    updateConfig('selfOnlyMode', enabled);
     // 通知悬浮窗切换模式
     if (overlayWindow && overlayWindow.webContents) {
         overlayWindow.webContents.send('self-only-mode-changed', enabled);
@@ -1628,6 +1728,9 @@ ipcMain.handle('get-all-user-data', () => {
 
 // 应用事件
 app.whenReady().then(() => {
+    // 加载配置文件
+    loadConfig();
+    
     createWindow();
     
     // 注册全局快捷键
@@ -1651,6 +1754,7 @@ app.whenReady().then(() => {
         // F11: 切换只看自己/看全队模式
         globalShortcut.register('F11', () => {
             selfOnlyMode = !selfOnlyMode;
+            updateConfig('selfOnlyMode', selfOnlyMode);
             logger.info(`F11 pressed - toggled self-only mode to: ${selfOnlyMode}`);
             // 通知所有窗口模式已切换
             if (mainWindow && mainWindow.webContents) {
@@ -1691,32 +1795,40 @@ app.whenReady().then(() => {
         logger.error('Failed to register global shortcuts:', error);
     }
     
-    // 自动创建悬浮窗，这样用户就能看到UID更新
-    setTimeout(() => {
-        try {
-            createOverlayWindow();
-            logger.info('Auto-created overlay window on startup');
-            // 如果已经有UID，立即发送给悬浮窗
-            if (user_uid && overlayWindow && overlayWindow.webContents) {
-                setTimeout(() => {
-                    overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
-                    logger.info('Sending existing UID to auto-created overlay window: ' + user_uid.toString());
-                }, 500);
+    // 根据配置决定是否创建DPS监控悬浮窗
+    if (appConfig.overlayEnabled) {
+        setTimeout(() => {
+            try {
+                createOverlayWindow();
+                logger.info('Auto-created overlay window on startup based on config');
+                // 如果已经有UID，立即发送给悬浮窗
+                if (user_uid && overlayWindow && overlayWindow.webContents) {
+                    setTimeout(() => {
+                        overlayWindow.webContents.send('player-uid-updated', user_uid.toString());
+                        logger.info('Sending existing UID to auto-created overlay window: ' + user_uid.toString());
+                    }, 500);
+                }
+            } catch (error) {
+                logger.error('Failed to auto-create overlay window:', error);
             }
-        } catch (error) {
-            logger.error('Failed to auto-create overlay window:', error);
-        }
-    }, 1000);
+        }, 1000);
+    }
     
-    // 自动创建DPS排行榜悬浮窗
-    setTimeout(() => {
-        try {
-            createRankingOverlayWindow();
-            logger.info('Auto-created ranking overlay window on startup');
-        } catch (error) {
-            logger.error('Failed to auto-create ranking overlay window:', error);
-        }
-    }, 1500);
+    // 根据配置决定是否创建DPS排行榜悬浮窗
+    if (appConfig.rankingOverlayEnabled) {
+        setTimeout(() => {
+            try {
+                createRankingOverlayWindow();
+                logger.info('Auto-created ranking overlay window on startup based on config');
+            } catch (error) {
+                logger.error('Failed to auto-create ranking overlay window:', error);
+            }
+        }, 1500);
+    }
+    
+    // 从配置中恢复自己模式状态
+    selfOnlyMode = appConfig.selfOnlyMode;
+    logger.info('Restored self-only mode from config:', selfOnlyMode);
     // 不在应用启动时自动启动定时器，而是在开始抓包时启动
 });
 
@@ -1730,6 +1842,11 @@ app.on('window-all-closed', () => {
         globalShortcut.unregisterAll();
         app.quit();
     }
+});
+
+app.on('before-quit', () => {
+    // 应用程序即将退出，重置标志
+    app.isMainWindowClosing = false;
 });
 
 app.on('activate', () => {

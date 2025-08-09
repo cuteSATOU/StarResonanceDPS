@@ -78,6 +78,35 @@
                 });
             }
             
+            // 全局鼠标移动监听 - 动态控制鼠标穿透
+            let isMouseOverHeader = false;
+            
+            document.addEventListener('mousemove', (event) => {
+                const rankingHeader = document.getElementById('rankingHeader');
+                if (rankingHeader) {
+                    const headerRect = rankingHeader.getBoundingClientRect();
+                    const mouseInHeader = event.clientX >= headerRect.left && 
+                                        event.clientX <= headerRect.right && 
+                                        event.clientY >= headerRect.top && 
+                                        event.clientY <= headerRect.bottom;
+                    
+                    if (mouseInHeader && !isMouseOverHeader) {
+                        // 鼠标进入标题栏区域
+                        isMouseOverHeader = true;
+                        ipcRenderer.invoke('ranking-overlay-set-ignore-mouse-events', false);
+                    } else if (!mouseInHeader && isMouseOverHeader) {
+                        // 鼠标离开标题栏区域
+                        isMouseOverHeader = false;
+                        ipcRenderer.invoke('ranking-overlay-set-ignore-mouse-events', true);
+                    }
+                }
+            });
+            
+            // 初始设置为穿透模式
+            setTimeout(() => {
+                ipcRenderer.invoke('ranking-overlay-set-ignore-mouse-events', true);
+            }, 100);
+            
             // 接收统计数据更新
             ipcRenderer.on('stats-updated', (event, data) => {
                 updatePlayersData(data);
@@ -335,26 +364,66 @@
         // 动态调整窗口大小
         function adjustWindowSize() {
             setTimeout(() => {
-                // 计算实际显示的条目数量
-                const rankingItems = document.querySelectorAll('.ranking-item');
-                const itemCount = rankingItems.length;
+                const container = document.querySelector('.ranking-overlay-container');
+                if (!container) return;
                 
-                // 基础高度：头部区域约60px + 内边距约32px
-                const baseHeight = 92;
-                // 每个条目的高度：min-height 45px + padding 16px = 61px
-                const itemHeight = 61;
-                // 计算总高度，最少显示1个条目的高度
-                const totalHeight = baseHeight + Math.max(1, itemCount) * itemHeight;
+                // 获取容器的实际内容高度
+                const containerRect = container.getBoundingClientRect();
+                const actualHeight = container.scrollHeight;
                 
+                // 获取当前窗口大小
+                const currentWidth = containerRect.width || 350;
+                
+                // 设置最小高度（头部 + 至少一个条目的空间）
+                const minHeight = 145;
+                
+                // 计算最终高度，确保不小于最小高度
+                const finalHeight = Math.max(minHeight, actualHeight);
+                
+                // 调整窗口大小
                 ipcRenderer.invoke('ranking-overlay-resize', {
-                    width: 300,
-                    height: totalHeight
+                    width: Math.max(350, currentWidth),
+                    height: finalHeight
                 });
-            }, 50);
+            }, 100); // 增加延迟确保DOM完全渲染
+        }
+        
+        // 监听窗口大小变化
+        function setupResizeObserver() {
+            if (typeof ResizeObserver !== 'undefined') {
+                const container = document.querySelector('.ranking-overlay-container');
+                if (container) {
+                    const resizeObserver = new ResizeObserver(entries => {
+                        // 当容器大小发生变化时，调整窗口大小
+                        adjustWindowSize();
+                    });
+                    resizeObserver.observe(container);
+                }
+            }
+        }
+        
+        // 监听内容变化
+        function setupMutationObserver() {
+            const rankingList = document.getElementById('rankingList');
+            if (rankingList) {
+                const mutationObserver = new MutationObserver(mutations => {
+                    // 当排行榜内容发生变化时，调整窗口大小
+                    adjustWindowSize();
+                });
+                mutationObserver.observe(rankingList, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true
+                });
+            }
         }
         
         // 页面加载完成后初始化
-        document.addEventListener('DOMContentLoaded', initializeRankingOverlay);
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeRankingOverlay();
+            setupResizeObserver();
+            setupMutationObserver();
+        });
         
         // 窗口关闭时清理
         window.addEventListener('beforeunload', () => {
