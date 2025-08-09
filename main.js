@@ -108,7 +108,7 @@ function flushLogQueue() {
 
 // 日志配置
 const logger = winston.createLogger({
-    level: 'debug',
+    level: 'warning',
     format: winston.format.combine(
         winston.format.colorize({ all: true }),
         winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -285,12 +285,16 @@ class UserDataManager {
                 skill_damage_stats[uid] = {};
             }
             if (!skill_damage_stats[uid][skillId]) {
-                skill_damage_stats[uid][skillId] = { total: 0, count: 0, critCount: 0, luckyCount: 0 };
+                skill_damage_stats[uid][skillId] = { total: 0, count: 0, critCount: 0, luckyCount: 0, max: 0 };
             }
             skill_damage_stats[uid][skillId].total += damage;
             skill_damage_stats[uid][skillId].count++;
             if (isCrit) skill_damage_stats[uid][skillId].critCount++;
             if (isLucky) skill_damage_stats[uid][skillId].luckyCount++;
+            // 更新最高伤害
+            if (damage > skill_damage_stats[uid][skillId].max) {
+                skill_damage_stats[uid][skillId].max = damage;
+            }
             
             // 记录技能使用次数统计
             if (!skill_count_stats[uid]) {
@@ -362,12 +366,16 @@ class UserDataManager {
                 skill_healing_stats[uid] = {};
             }
             if (!skill_healing_stats[uid][skillId]) {
-                skill_healing_stats[uid][skillId] = { total: 0, count: 0, critCount: 0, luckyCount: 0 };
+                skill_healing_stats[uid][skillId] = { total: 0, count: 0, critCount: 0, luckyCount: 0, max: 0 };
             }
             skill_healing_stats[uid][skillId].total += healing;
             skill_healing_stats[uid][skillId].count++;
             if (isCrit) skill_healing_stats[uid][skillId].critCount++;
             if (isLucky) skill_healing_stats[uid][skillId].luckyCount++;
+            // 更新最高治疗
+            if (healing > skill_healing_stats[uid][skillId].max) {
+                skill_healing_stats[uid][skillId].max = healing;
+            }
             
             // 记录技能使用次数统计
             if (!skill_count_stats[uid]) {
@@ -1032,10 +1040,16 @@ function startDataUpdateTimers() {
         
         // 只有在抓包状态下才计算实时DPS和HPS
         if (isCapturing) {
+            // 获取所有有伤害数据的用户ID
+            const allDpsUids = new Set([...Object.keys(dps_window), ...Object.keys(realtime_dps)]);
+            
             // 计算实时DPS
-            for (const uid of Object.keys(dps_window)) {
-                while (dps_window[uid].length > 0 && dps_window[uid][0] && dps_window[uid][0].time && now - dps_window[uid][0].time > 1000) {
-                    dps_window[uid].shift();
+            for (const uid of allDpsUids) {
+                // 清理过期数据
+                if (dps_window[uid]) {
+                    while (dps_window[uid].length > 0 && dps_window[uid][0] && dps_window[uid][0].time && now - dps_window[uid][0].time > 1000) {
+                        dps_window[uid].shift();
+                    }
                 }
                 
                 if (!realtime_dps[uid]) {
@@ -1045,20 +1059,30 @@ function startDataUpdateTimers() {
                     };
                 }
                 
+                // 计算当前实时DPS
                 realtime_dps[uid].value = 0;
-                for (const b of dps_window[uid]) {
-                    realtime_dps[uid].value += b.damage;
+                if (dps_window[uid] && dps_window[uid].length > 0) {
+                    for (const b of dps_window[uid]) {
+                        realtime_dps[uid].value += b.damage;
+                    }
                 }
                 
+                // 更新峰值
                 if (realtime_dps[uid].value > realtime_dps[uid].max) {
                     realtime_dps[uid].max = realtime_dps[uid].value;
                 }
             }
             
+            // 获取所有有治疗数据的用户ID
+            const allHpsUids = new Set([...Object.keys(hps_window), ...Object.keys(realtime_hps)]);
+            
             // 计算实时HPS
-            for (const uid of Object.keys(hps_window)) {
-                while (hps_window[uid].length > 0 && hps_window[uid][0] && hps_window[uid][0].time && now - hps_window[uid][0].time > 1000) {
-                    hps_window[uid].shift();
+            for (const uid of allHpsUids) {
+                // 清理过期数据
+                if (hps_window[uid]) {
+                    while (hps_window[uid].length > 0 && hps_window[uid][0] && hps_window[uid][0].time && now - hps_window[uid][0].time > 1000) {
+                        hps_window[uid].shift();
+                    }
                 }
                 
                 if (!realtime_hps[uid]) {
@@ -1068,11 +1092,15 @@ function startDataUpdateTimers() {
                     };
                 }
                 
+                // 计算当前实时HPS
                 realtime_hps[uid].value = 0;
-                for (const h of hps_window[uid]) {
-                    realtime_hps[uid].value += h.healing;
+                if (hps_window[uid] && hps_window[uid].length > 0) {
+                    for (const h of hps_window[uid]) {
+                        realtime_hps[uid].value += h.healing;
+                    }
                 }
                 
+                // 更新峰值
                 if (realtime_hps[uid].value > realtime_hps[uid].max) {
                     realtime_hps[uid].max = realtime_hps[uid].value;
                 }

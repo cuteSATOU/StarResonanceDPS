@@ -1,4 +1,5 @@
 const { ipcRenderer } = require('electron');
+const echarts = require('echarts');
 
 // DOM元素引用
 let statusCard, statusIndicator, currentDevice, playerUid, noDataMessage, statsContainer;
@@ -1054,15 +1055,14 @@ function analyzeUserSkillData(userData) {
     if (userData.skill_damage_stats && Object.keys(userData.skill_damage_stats).length > 0) {
         for (const [skillId, skillData] of Object.entries(userData.skill_damage_stats)) {
             if (skillData.total && skillData.total > 0) {
-                const countData = userData.skill_count_stats[skillId] || {};
                 damageSkills[skillId] = {
                     totalDamage: skillData.total,
-                    count: countData.total || 0,
+                    count: skillData.count || 0,
                     maxDamage: skillData.max || 0,
-                    avgDamage: countData.total > 0 ? skillData.total / countData.total : 0,
-                    critRate: countData.total > 0 ? ((countData.critical || 0) / countData.total * 100) : 0
+                    avgDamage: skillData.count > 0 ? skillData.total / skillData.count : 0,
+                    critRate: skillData.count > 0 ? ((skillData.critCount || 0) / skillData.count * 100) : 0,
+                    luckyRate: skillData.count > 0 ? ((skillData.luckyCount || 0) / skillData.count * 100) : 0
                 };
-
             }
         }
     }
@@ -1071,15 +1071,14 @@ function analyzeUserSkillData(userData) {
     if (userData.skill_healing_stats && Object.keys(userData.skill_healing_stats).length > 0) {
         for (const [skillId, skillData] of Object.entries(userData.skill_healing_stats)) {
             if (skillData.total && skillData.total > 0) {
-                const countData = userData.skill_count_stats[skillId] || {};
                 healingSkills[skillId] = {
                     totalHealing: skillData.total,
-                    count: countData.healing_total || 0,
-                    maxHealing: skillData.healing_max || 0,
-                    avgHealing: countData.healing_total > 0 ? skillData.total / countData.healing_total : 0,
-                    critRate: countData.healing_total > 0 ? ((countData.healing_critical || 0) / countData.healing_total * 100) : 0
+                    count: skillData.count || 0,
+                    maxHealing: skillData.max || 0,
+                    avgHealing: skillData.count > 0 ? skillData.total / skillData.count : 0,
+                    critRate: skillData.count > 0 ? ((skillData.critCount || 0) / skillData.count * 100) : 0,
+                    luckyRate: skillData.count > 0 ? ((skillData.luckyCount || 0) / skillData.count * 100) : 0
                 };
-
             }
         }
     }
@@ -1170,24 +1169,152 @@ function updateSkillChart(chartElement, skillsData, valueKey) {
     const sortedSkills = Object.entries(skillsData)
         .sort(([,a], [,b]) => b[valueKey] - a[valueKey]);
     
-    sortedSkills.forEach(([skillId, skillData]) => {
-        const percentage = (skillData[valueKey] / totalValue * 100).toFixed(1);
-        
-        const skillItem = document.createElement('div');
-        skillItem.className = 'skill-item';
-        skillItem.innerHTML = `
-            <div class="skill-name">技能${skillId}</div>
-            <div class="skill-bar">
-                <div class="skill-fill" style="width: ${percentage}%"></div>
-            </div>
-            <div class="skill-percentage">${percentage}%</div>
-            <div class="skill-value">${formatNumber(skillData[valueKey])}</div>
-        `;
-        
-        chartElement.appendChild(skillItem);
-    });
+    // 创建ECharts容器
+    const chartContainer = document.createElement('div');
+    chartContainer.style.width = '100%';
+    chartContainer.style.height = '400px';
+    chartContainer.className = 'echarts-container';
     
-
+    chartElement.appendChild(chartContainer);
+    
+    // 初始化ECharts实例
+    const chart = echarts.init(chartContainer);
+    
+    // 准备数据
+    const chartData = sortedSkills.map(([skillId, skillData]) => ({
+        name: `技能${skillId}`,
+        value: skillData[valueKey],
+        skillId: skillId,
+        skillData: skillData,
+        valueKey: valueKey
+    }));
+    
+    // 配置选项
+     const option = {
+        tooltip: {
+            trigger: 'item',
+            formatter: function(params) {
+                const data = params.data;
+                const percentage = params.percent;
+                const skillData = data.skillData;
+                const valueKey = data.valueKey;
+                
+                return `
+                    <div style="padding: 8px;">
+                        <div style="font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid #eee; padding-bottom: 4px;">${data.name}</div>
+                        <div style="margin-bottom: 4px;">
+                            <span style="color: #666;">${valueKey === 'totalDamage' ? '总伤害' : '总治疗'}:</span>
+                            <span style="font-weight: bold; margin-left: 8px;">${formatNumber(data.value)}</span>
+                        </div>
+                        <div style="margin-bottom: 4px;">
+                            <span style="color: #666;">占比:</span>
+                            <span style="font-weight: bold; margin-left: 8px;">${percentage}%</span>
+                        </div>
+                        <div style="margin-bottom: 4px;">
+                            <span style="color: #666;">次数:</span>
+                            <span style="font-weight: bold; margin-left: 8px;">${skillData.count || 0}</span>
+                        </div>
+                        <div style="margin-bottom: 4px;">
+                            <span style="color: #666;">${valueKey === 'totalDamage' ? '平均伤害' : '平均治疗'}:</span>
+                            <span style="font-weight: bold; margin-left: 8px;">${formatNumber(skillData[valueKey === 'totalDamage' ? 'avgDamage' : 'avgHealing'] || 0)}</span>
+                        </div>
+                        <div style="margin-bottom: 4px;">
+                            <span style="color: #666;">${valueKey === 'totalDamage' ? '最高伤害' : '最高治疗'}:</span>
+                            <span style="font-weight: bold; margin-left: 8px;">${formatNumber(skillData[valueKey === 'totalDamage' ? 'maxDamage' : 'maxHealing'] || 0)}</span>
+                        </div>
+                        <div style="margin-bottom: 4px;">
+                            <span style="color: #666;">暴击率:</span>
+                            <span style="font-weight: bold; margin-left: 8px;">${(skillData.critRate || 0).toFixed(1)}%</span>
+                        </div>
+                        <div>
+                            <span style="color: #666;">幸运率:</span>
+                            <span style="font-weight: bold; margin-left: 8px;">${(skillData.luckyRate || 0).toFixed(1)}%</span>
+                        </div>
+                    </div>
+                `;
+            },
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            borderColor: '#ccc',
+            borderWidth: 1,
+            textStyle: {
+                fontSize: 12
+            }
+        },
+        legend: {
+              orient: 'horizontal',
+              bottom: 5,
+              left: 'center',
+              data: chartData.map(item => item.name),
+              textStyle: {
+                  fontSize: 10
+              },
+              itemWidth: 12,
+              itemHeight: 8,
+              itemGap: 8,
+              formatter: function(name) {
+                  const item = chartData.find(d => d.name === name);
+                  if (item) {
+                      const percentage = ((item.value / totalValue) * 100).toFixed(1);
+                      return `${name} (${percentage}%)`;
+                  }
+                  return name;
+              }
+          },
+        series: [{
+            name: valueKey === 'totalDamage' ? '伤害占比' : '治疗占比',
+            type: 'pie',
+            radius: ['35%', '75%'],
+             center: ['50%', '40%'],
+            avoidLabelOverlap: false,
+            itemStyle: {
+                borderRadius: 8,
+                borderColor: '#fff',
+                borderWidth: 2
+            },
+            label: {
+                show: false,
+                position: 'center'
+            },
+            emphasis: {
+                label: {
+                    show: true,
+                    fontSize: '18',
+                    fontWeight: 'bold'
+                },
+                itemStyle: {
+                    shadowBlur: 10,
+                    shadowOffsetX: 0,
+                    shadowColor: 'rgba(0, 0, 0, 0.5)'
+                }
+            },
+            labelLine: {
+                show: false
+            },
+            data: chartData,
+            animationType: 'scale',
+            animationEasing: 'elasticOut',
+            animationDelay: function (idx) {
+                return Math.random() * 200;
+            }
+        }],
+        color: [
+            '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
+            '#06b6d4', '#f97316', '#84cc16', '#ec4899', '#6366f1'
+        ]
+    };
+    
+    // 设置配置项并渲染图表
+    chart.setOption(option);
+    
+    // 响应式处理
+    const resizeObserver = new ResizeObserver(() => {
+        chart.resize();
+    });
+    resizeObserver.observe(chartContainer);
+    
+    // 存储chart实例以便后续清理
+    chartContainer._echartsInstance = chart;
+    chartContainer._resizeObserver = resizeObserver;
 }
 
 // 更新技能表格
@@ -1202,7 +1329,7 @@ function updateSkillTable(tableBody, skillsData, type) {
     
     if (totalValue === 0) {
         const row = document.createElement('tr');
-        row.innerHTML = '<td colspan="7" style="text-align: center; color: var(--text-muted);">暂无数据</td>';
+        row.innerHTML = '<td colspan="8" style="text-align: center; color: var(--text-muted);">暂无数据</td>';
         tableBody.appendChild(row);
         return;
     }
@@ -1225,6 +1352,7 @@ function updateSkillTable(tableBody, skillsData, type) {
             <td class="number">${formatNumber(skillData[avgKey])}</td>
             <td class="number">${formatNumber(skillData[maxKey])}</td>
             <td class="number">${skillData.critRate.toFixed(1)}%</td>
+            <td class="number">${skillData.luckyRate.toFixed(1)}%</td>
         `;
         
         tableBody.appendChild(row);

@@ -1,10 +1,12 @@
 {
   "name": "stardps",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "星痕共鸣第三方DPS统计工具",
   "license": "ISC",
   "author": "SATOU",
-  "maintainers": ["HoshimiRIN"],
+  "maintainers": [
+    "HoshimiRIN"
+  ],
   "type": "commonjs",
   "main": "main.js",
   "scripts": {
@@ -19,6 +21,7 @@
   },
   "dependencies": {
     "cap": "^0.2.1",
+    "echarts": "^6.0.0",
     "electron-squirrel-startup": "^1.0.1",
     "protobufjs": "^7.2.5",
     "winston": "^3.11.0"
