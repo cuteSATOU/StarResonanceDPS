@@ -133,7 +133,7 @@ function flushLogQueue() {
 
 // 日志配置
 const logger = winston.createLogger({
-    level: 'info',
+    level: 'warn',
     format: winston.format.combine(
         winston.format.colorize({ all: true }),
         winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
