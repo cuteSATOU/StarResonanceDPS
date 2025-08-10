@@ -544,7 +544,7 @@ function createOverlayWindow() {
         maxHeight: 800,
         frame: false,
         transparent: true,
-        alwaysOnTop: true,
+        alwaysOnTop: false,
         resizable: true,
         skipTaskbar: true,
         webPreferences: {
@@ -553,6 +553,9 @@ function createOverlayWindow() {
         },
         title: 'DPS悬浮窗'
     });
+
+    // 设置为screen-saver级别的置顶
+    overlayWindow.setAlwaysOnTop(true, "screen-saver");
 
     overlayWindow.loadFile('src/overlay-window.html');
 
@@ -624,7 +627,7 @@ function createRankingOverlayWindow() {
         height: 145,
         frame: false,
         transparent: true,
-        alwaysOnTop: true,
+        alwaysOnTop: false,
         resizable: false,
         skipTaskbar: true,
         webPreferences: {
@@ -633,6 +636,9 @@ function createRankingOverlayWindow() {
         },
         title: 'DPS排行榜'
     });
+
+    // 设置为screen-saver级别的置顶
+    rankingOverlayWindow.setAlwaysOnTop(true, "screen-saver");
 
     rankingOverlayWindow.loadFile('src/dps-ranking-overlay.html');
 
@@ -1598,7 +1604,7 @@ ipcMain.handle('ranking-overlay-close', () => {
 
 ipcMain.handle('ranking-overlay-set-always-on-top', (event, alwaysOnTop) => {
     if (rankingOverlayWindow) {
-        rankingOverlayWindow.setAlwaysOnTop(alwaysOnTop);
+        rankingOverlayWindow.setAlwaysOnTop(alwaysOnTop, "screen-saver");
     }
 });
 
@@ -1622,7 +1628,7 @@ ipcMain.handle('overlay-close', () => {
 
 ipcMain.handle('overlay-set-always-on-top', (event, alwaysOnTop) => {
     if (overlayWindow) {
-        overlayWindow.setAlwaysOnTop(alwaysOnTop);
+        overlayWindow.setAlwaysOnTop(alwaysOnTop, "screen-saver");
     }
 });
 

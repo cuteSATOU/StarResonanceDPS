@@ -1,18 +1,8 @@
 const { ipcRenderer } = require('electron');
 const echarts = require('echarts');
-const fs = require('fs');
-const path = require('path');
 
-// 加载技能配置
-let skillConfig = {};
-try {
-    const skillConfigPath = path.join(__dirname, '..', 'skill_config.json');
-    const skillConfigData = fs.readFileSync(skillConfigPath, 'utf8');
-    skillConfig = JSON.parse(skillConfigData);
-} catch (error) {
-    console.warn('Failed to load skill config:', error);
-    skillConfig = { skills: {} };
-}
+// 引入技能配置
+const skillConfig = require('./skill_config.js');
 
 // 获取技能名称的辅助函数
 function getSkillName(skillId) {
