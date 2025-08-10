@@ -55,9 +55,12 @@ let user_uid;
 let current_server = '';
 let _data = Buffer.alloc(0);
 let tcp_next_seq = -1;
-let tcp_cache = {};
-let tcp_cache_size = 0;
+let tcp_cache = new Map();
 let tcp_last_time = 0;
+
+// IP分片处理相关变量
+const fragmentIpCache = new Map();
+const FRAGMENT_TIMEOUT = 30000;
 
 // 性能监控变量
 let packet_count = 0;
@@ -70,6 +73,7 @@ let logQueue = [];
 // 内存优化变量
 let dataCleanupInterval;
 let statsUpdateInterval;
+let tcpCleanupInterval;
 
 // 配置文件路径
 const configPath = path.join(app.getPath('userData'), 'config.json');
@@ -146,30 +150,7 @@ const logger = winston.createLogger({
 let packetProcessor;
 
 // Lock类用于TCP包处理同步
-class Lock {
-    constructor() {
-        this.queue = [];
-        this.locked = false;
-    }
-
-    async acquire() {
-        if (this.locked) {
-            return new Promise((resolve) => this.queue.push(resolve));
-        }
-        this.locked = true;
-    }
-
-    release() {
-        if (this.queue.length > 0) {
-            const nextResolve = this.queue.shift();
-            nextResolve();
-        } else {
-            this.locked = false;
-        }
-    }
-}
-
-const tcp_lock = new Lock();
+// TCP锁已移除，改为单线程处理
 
 // 配置管理函数
 function loadConfig() {
@@ -237,9 +218,9 @@ class UserDataManager {
     }
     
     static getDisplayName(uid) {
-        // 如果是当前玩家，显示"你"
+        // 如果是当前玩家，优先显示昵称，如果没有昵称则显示UID
         if (user_uid && uid === user_uid.toString()) {
-            return '你';
+            return player_names[uid] || uid;
         }
         // 如果有昵称则显示昵称，否则显示UID
         return player_names[uid] || uid;
@@ -784,8 +765,74 @@ function clearTcpCache() {
     _data = Buffer.alloc(0);
     tcp_next_seq = -1;
     tcp_last_time = 0;
-    tcp_cache = {};
-    tcp_cache_size = 0;
+    tcp_cache.clear();
+}
+
+// IP分片处理函数
+function getTCPPacket(frameBuffer, ethOffset) {
+    const ipPacket = decoders.IPV4(frameBuffer, ethOffset);
+    const ipId = ipPacket.info.id;
+    const isFragment = (ipPacket.info.flags & 0x1) !== 0;
+    const _key = `${ipId}-${ipPacket.info.srcaddr}-${ipPacket.info.dstaddr}-${ipPacket.info.protocol}`;
+    const now = Date.now();
+
+    if (isFragment || ipPacket.info.fragoffset > 0) {
+        if (!fragmentIpCache.has(_key)) {
+            fragmentIpCache.set(_key, {
+                fragments: [],
+                timestamp: now
+            });
+        }
+
+        const cacheEntry = fragmentIpCache.get(_key);
+        const ipBuffer = Buffer.from(frameBuffer.subarray(ethOffset));
+        cacheEntry.fragments.push(ipBuffer);
+        cacheEntry.timestamp = now;
+
+        // there's more fragment ip packet, wait for the rest
+        if (isFragment) {
+            return null;
+        }
+
+        // last fragment received, reassemble
+        const fragments = cacheEntry.fragments;
+        if (!fragments) {
+            logger.error(`Can't find fragments for ${_key}`);
+            return null;
+        }
+
+        // Reassemble fragments based on their offset
+        let totalLength = 0;
+        const fragmentData = [];
+
+        // Collect fragment data with their offsets
+        for (const buffer of fragments) {
+            const ip = decoders.IPV4(buffer);
+            const fragmentOffset = ip.info.fragoffset * 8;
+            const payloadLength = ip.info.totallen - ip.hdrlen;
+            const payload = Buffer.from(buffer.subarray(ip.offset, ip.offset + payloadLength));
+
+            fragmentData.push({
+                offset: fragmentOffset,
+                payload: payload
+            });
+
+            const endOffset = fragmentOffset + payloadLength;
+            if (endOffset > totalLength) {
+                totalLength = endOffset;
+            }
+        }
+
+        const fullPayload = Buffer.alloc(totalLength);
+        for (const fragment of fragmentData) {
+            fragment.payload.copy(fullPayload, fragment.offset);
+        }
+
+        fragmentIpCache.delete(_key);
+        return fullPayload;
+    }
+
+    return Buffer.from(frameBuffer.subarray(ipPacket.offset, ipPacket.offset + (ipPacket.info.totallen - ipPacket.hdrlen)));
 }
 
 // 开始抓包
@@ -815,6 +862,9 @@ function startCapture(deviceIndex) {
         // 确保先停止之前的定时器，再启动新的定时器
         stopDataUpdateTimers();
         startDataUpdateTimers();
+        
+        // 启动TCP缓存清理定时器
+        startTcpCleanupTimer();
 
         // 通知主窗口状态更新
         if (mainWindow) {
@@ -833,7 +883,7 @@ function startCapture(deviceIndex) {
             } else if (now - last_packet_time > 5000) { // 每5秒检查一次
                 const pps = packet_count / ((now - last_packet_time) / 1000);
                 if (pps > 1000 && performance_warnings < 5) { // 每秒超过1000包时警告
-                    logger.warn(`高流量检测: ${pps.toFixed(0)} 包/秒, TCP缓存: ${tcp_cache_size}`);
+                    logger.warn(`高流量检测: ${pps.toFixed(0)} 包/秒, TCP缓存: ${tcp_cache.size}`);
                     performance_warnings++;
                 }
                 packet_count = 0;
@@ -846,31 +896,55 @@ function startCapture(deviceIndex) {
                 var ret = decoders.Ethernet(buffer1);
                 
                 if (ret.info.type === PROTOCOL.ETHERNET.IPV4) {
-                    ret = decoders.IPV4(buffer1, ret.offset);
-                    const srcaddr = ret.info.srcaddr;
-                    const dstaddr = ret.info.dstaddr;
+                    const ipPacket = decoders.IPV4(buffer1, ret.offset);
+                    const srcaddr = ipPacket.info.srcaddr;
+                    const dstaddr = ipPacket.info.dstaddr;
                     
-                    if (ret.info.protocol === PROTOCOL.IP.TCP) {
-                        var datalen = ret.info.totallen - ret.hdrlen;
-                        ret = decoders.TCP(buffer1, ret.offset);
+                    if (ipPacket.info.protocol === PROTOCOL.IP.TCP) {
+                        const tcpBuffer = getTCPPacket(buffer1, ret.offset);
+                        if (tcpBuffer === null) return; // IP分片未完成，等待更多分片
                         
-                        const srcport = ret.info.srcport;
-                        const dstport = ret.info.dstport;
+                        const tcpPacket = decoders.TCP(tcpBuffer);
+                        const srcport = tcpPacket.info.srcport;
+                        const dstport = tcpPacket.info.dstport;
                         const src_server = `${srcaddr}:${srcport} -> ${dstaddr}:${dstport}`;
                         
-                        datalen -= ret.hdrlen;
-                        let buf = Buffer.from(buffer1.subarray(ret.offset, ret.offset + datalen));
+                        const buf = Buffer.from(tcpBuffer.subarray(tcpPacket.hdrlen));
                         
-                        if (tcp_last_time && Date.now() - tcp_last_time > 30000) {
-                            logger.warn('无法捕获下一个包! 游戏是否关闭或断线? seq: ' + tcp_next_seq);
-                            current_server = '';
-                            clearTcpCache();
-                        }
+                        // TCP超时检查已移至定时器中处理
                         
                         if (current_server !== src_server) {
                             try {
+                                // 尝试通过小包识别服务器
+                                if (buf[4] == 0) {
+                                    const data = buf.subarray(10);
+                                    if (data.length) {
+                                        const stream = Readable.from(data, { objectMode: false });
+                                        let data1;
+                                        
+                                        do {
+                                            const len_buf = stream.read(4);
+                                            if (!len_buf) break;
+                                            data1 = stream.read(len_buf.readUInt32BE() - 4);
+                                            
+                                            const signature = Buffer.from([0x00, 0x63, 0x33, 0x53, 0x42, 0x00]); //c3SB??
+                                            if (Buffer.compare(data1.subarray(5, 5 + signature.length), signature)) break;
+                                            
+                                            try {
+                                                if (current_server !== src_server) {
+                                                    current_server = src_server;
+                                                    clearTcpCache();
+                                                    tcp_next_seq = tcpPacket.info.seqno + buf.length;
+                                                    logger.info('Got Scene Server Address: ' + src_server);
+                                                }
+                                            } catch (e) { }
+                                        } while (data1 && data1.length);
+                                    }
+                                }
+                                
                                 // 尝试通过登录返回包识别服务器(仍需测试)
                                 if (buf.length === 0x62) {
+                                    // prettier-ignore
                                     const signature = Buffer.from([
                                         0x00, 0x00, 0x00, 0x62,
                                         0x00, 0x03,
@@ -884,12 +958,13 @@ function startCapture(deviceIndex) {
                                         if (current_server !== src_server) {
                                             current_server = src_server;
                                             clearTcpCache();
+                                            tcp_next_seq = tcpPacket.info.seqno + buf.length;
                                             logger.info('Got Scene Server Address by Login Return Packet: ' + src_server);
                                         }
                                     }
                                 }
                                 
-                                // 尝试通过小包识别服务器
+                                // 尝试解析protobuf获取UID（保留原有逻辑）
                                 if (buf[4] == 0) {
                                     const data = buf.subarray(10);
                                     if (data.length) {
@@ -906,11 +981,6 @@ function startCapture(deviceIndex) {
                                             
                                             try {
                                                 let body = pb.decode(data1.subarray(18)) || {};
-                                                if (current_server !== src_server) {
-                                                    current_server = src_server;
-                                                    clearTcpCache();
-                                                    logger.info('Scene server address obtained: ' + src_server);
-                                                }
                                                 
                                                 if (data1[17] === 0x2e) {
                                                     body = body[1];
@@ -953,68 +1023,72 @@ function startCapture(deviceIndex) {
                             return;
                         }
                         
-                        // TCP包重组处理 - 使用异步处理避免阻塞
-                        setImmediate(async () => {
+                        // TCP包重组处理 - 按顺序单线程处理
+                        try {
                             // 如果不在抓包状态，直接返回
                             if (!isCapturing) {
                                 return;
                             }
                             
-                            try {
-                                await tcp_lock.acquire();
-                                
-                                if (tcp_next_seq === -1 && buf.length > 4 && buf.readUInt32BE() < 999999) {
-                                    tcp_next_seq = ret.info.seqno;
+                            if (tcp_next_seq === -1) {
+                                logger.error("Unexpected TCP capture error! tcp_next_seq is -1");
+                                if (buf.length > 4 && buf.readUInt32BE() < 0x0fffff) {
+                                    tcp_next_seq = tcpPacket.info.seqno;
                                 }
-                                
-                                tcp_cache[ret.info.seqno] = buf;
-                                tcp_cache_size++;
-                                
-                                // 防止缓存过大导致内存溢出
-                                if (tcp_cache_size > 10000) {
-                                    logger.warn(`TCP缓存过大 (${tcp_cache_size})，清理旧数据`);
-                                    const keys = Object.keys(tcp_cache).sort((a, b) => parseInt(a) - parseInt(b));
-                                    const toDelete = keys.slice(0, tcp_cache_size - 5000);
-                                    for (const key of toDelete) {
-                                        if (tcp_cache[key]) {
-                                            delete tcp_cache[key];
-                                            tcp_cache_size--;
-                                        }
-                                    }
-                                }
-                                
-                                while (tcp_cache[tcp_next_seq]) {
-                                    const seq = tcp_next_seq;
-                                    _data = _data.length === 0 ? tcp_cache[seq] : Buffer.concat([_data, tcp_cache[seq]]);
-                                    tcp_next_seq = (seq + tcp_cache[seq].length) >>> 0;
-                                    delete tcp_cache[seq];
-                                    tcp_cache_size--;
-                                    tcp_last_time = Date.now();
-                                }
-                                
-                                while (_data.length > 4) {
-                                    let len = _data.readUInt32BE();
-                                    if (_data.length >= len) {
-                                        const packet = _data.subarray(0, len);
-                                        _data = _data.subarray(len);
-                                        // 异步处理数据包，避免阻塞
-                                        setImmediate(() => processPacket(packet));
-                                    } else {
-                                        if (len > 999999) {
-                                            logger.error(`无效长度!! ${_data.length},${len}，重置TCP状态`);
-                                            // 不退出程序，而是重置TCP状态
-                                            clearTcpCache();
-                                        }
-                                        break;
-                                    }
-                                }
-                                
-                                tcp_lock.release();
-                            } catch (error) {
-                                logger.error('TCP包处理错误:', error);
-                                tcp_lock.release();
                             }
-                        });
+                            
+                            // 只缓存有效的包（按顺序或tcp_next_seq为-1时）
+                            // 正确处理32位无符号整数的序列号比较
+                            const seqDiff = (tcpPacket.info.seqno - tcp_next_seq) >>> 0;
+                            if (tcp_next_seq === -1 || seqDiff < 0x80000000) {
+                                tcp_cache.set(tcpPacket.info.seqno, buf);
+                            }
+                            
+                            // 防止缓存过大导致内存溢出
+                            if (tcp_cache.size > 40000) {
+                                logger.warn(`TCP缓存过大 (${tcp_cache.size})，清理旧数据`);
+                                const keys = Array.from(tcp_cache.keys()).sort((a, b) => a - b);
+                                const toDelete = keys.slice(0, tcp_cache.size - 30000);
+                                for (const key of toDelete) {
+                                    tcp_cache.delete(key);
+                                }
+                            }
+                            
+                            // 按顺序重组TCP包
+                            while (tcp_cache.has(tcp_next_seq)) {
+                                const seq = tcp_next_seq;
+                                const cachedTcpData = tcp_cache.get(seq);
+                                _data = _data.length === 0 ? cachedTcpData : Buffer.concat([_data, cachedTcpData]);
+                                tcp_next_seq = (seq + cachedTcpData.length) >>> 0; // uint32
+                                tcp_cache.delete(seq);
+                                tcp_last_time = Date.now();
+                            }
+                            
+                            // 处理完整的数据包
+                            while (_data.length >= 4) {
+                                // 先peek包大小，不消耗字节
+                                let packetSize = _data.readUInt32BE(0);
+                                
+                                // 检查包大小是否合理
+                                if (packetSize > 0x0fffff || packetSize < 4) {
+                                    logger.error(`无效包大小!! ${_data.length},${packetSize}，重置TCP状态`);
+                                    clearTcpCache();
+                                    break;
+                                }
+                                
+                                // 检查是否有完整的包
+                                if (_data.length < packetSize) break;
+                                
+                                // 提取完整的包并处理
+                                const packet = _data.subarray(0, packetSize);
+                                _data = _data.subarray(packetSize);
+                                // 同步处理数据包
+                                processPacket(packet);
+                            }
+                            
+                        } catch (error) {
+                            logger.error('TCP包处理错误:', error);
+                        }
                     }
                 }
             }
@@ -1353,20 +1427,18 @@ function startDataUpdateTimers() {
         }
 
         // 清理TCP缓存中的过期数据
-        for (const key of Object.keys(tcp_cache)) {
-            if (tcp_cache[key] && tcp_cache[key].time && now - tcp_cache[key].time > maxAge) {
-                delete tcp_cache[key];
-                tcp_cache_size--;
+        for (const [key, value] of tcp_cache) {
+            if (value && value.time && now - value.time > maxAge) {
+                tcp_cache.delete(key);
             }
         }
 
         // 限制TCP缓存大小
-        if (tcp_cache_size > 5000) { // 增加TCP缓存限制到5000
-            const keys = Object.keys(tcp_cache);
-            const toDelete = keys.slice(0, tcp_cache_size - 4000);
+        if (tcp_cache.size > 40000) { // 增加TCP缓存限制到40000
+            const keys = Array.from(tcp_cache.keys());
+            const toDelete = keys.slice(0, tcp_cache.size - 30000);
             for (const key of toDelete) {
-                delete tcp_cache[key];
-                tcp_cache_size--;
+                tcp_cache.delete(key);
             }
         }
 
@@ -1375,7 +1447,7 @@ function startDataUpdateTimers() {
             logQueue = logQueue.slice(-50);
         }
 
-        logger.debug(`Memory cleanup completed - DPS windows: ${Object.keys(dps_window).length}, HPS windows: ${Object.keys(hps_window).length}, TCP cache: ${tcp_cache_size}, Log cache: ${logQueue.length}`);
+        logger.debug(`Memory cleanup completed - DPS windows: ${Object.keys(dps_window).length}, HPS windows: ${Object.keys(hps_window).length}, TCP cache: ${tcp_cache.size}, Log cache: ${logQueue.length}`);
     }, 60000); // 增加清理间隔到60秒，减少性能开销
 }
 
@@ -1389,6 +1461,37 @@ function stopDataUpdateTimers() {
         clearInterval(dataCleanupInterval);
         dataCleanupInterval = null;
     }
+    if (tcpCleanupInterval) {
+        clearInterval(tcpCleanupInterval);
+        tcpCleanupInterval = null;
+    }
+}
+
+// TCP缓存清理定时器
+function startTcpCleanupTimer() {
+    // 停止之前的定时器
+    if (tcpCleanupInterval) {
+        clearInterval(tcpCleanupInterval);
+    }
+    
+    // 每10秒检查一次TCP连接状态和清理过期缓存
+    tcpCleanupInterval = setInterval(() => {
+        const now = Date.now();
+        const TIMEOUT = 30000; // 30秒超时
+        
+        // 清理过期的IP分片缓存
+        for (const [key, fragment] of fragmentIpCache.entries()) {
+            if (now - fragment.timestamp > FRAGMENT_TIMEOUT) {
+                fragmentIpCache.delete(key);
+            }
+        }
+        
+        if (tcp_last_time && now - tcp_last_time > TIMEOUT) {
+            logger.warn('无法捕获下一个包! 游戏是否关闭或断线? seq: ' + tcp_next_seq);
+            current_server = '';
+            clearTcpCache();
+        }
+    }, 10000);
 }
 
 // IPC事件处理
@@ -1717,6 +1820,7 @@ ipcMain.handle('get-user-data', (event, uid) => {
     return {
         name: UserDataManager.getName(uid),
         fightPoint: UserDataManager.getFightPoint(uid),
+        playerFightPoint: UserDataManager.getFightPoint(uid),
         professionId: UserDataManager.getProfessionId(uid),
         displayName: UserDataManager.getDisplayName(uid)
     };

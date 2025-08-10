@@ -115,8 +115,12 @@
                         <span class="detail-value" id="healingCount">0</span>
                     </div>
                     <div class="detail-row">
-                        <span class="detail-label">玩家UID</span>
+                        <span class="detail-label">玩家</span>
                         <span class="detail-value" id="playerUid">未检测</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">战力</span>
+                        <span class="detail-value" id="playerFightPoint">未检测</span>
                     </div>
                 </div>
             </div>
@@ -175,7 +179,7 @@
         let selfOnlyMode = false;
 
         // DOM元素
-        let realtimeDps, maxDps, avgDps, totalDamage, critRate, attackCount, playerUid;
+        let realtimeDps, maxDps, avgDps, totalDamage, critRate, attackCount, playerUid, playerFightPoint;
         let realtimeHps, maxHps, avgHps, totalHealing, healingCount;
         let realtimeDpsBar, maxDpsBar, avgDpsBar;
         let realtimeHpsBar, maxHpsBar, avgHpsBar;
@@ -199,6 +203,7 @@
             critRate = document.getElementById('critRate');
             attackCount = document.getElementById('attackCount');
             playerUid = document.getElementById('playerUid');
+            playerFightPoint = document.getElementById('playerFightPoint');
             
             // 调试：检查DOM元素是否正确获取
             console.log('悬浮窗DOM元素初始化:', {
@@ -389,40 +394,73 @@
 
             // 原来的数据更新监听器已移到下面，添加了调试信息
 
-            // 接收玩家UID更新
-            ipcRenderer.on('player-uid-updated', (event, uid) => {
-                console.log('悬浮窗收到UID更新事件:', {
-                    uid: uid,
-                    uidType: typeof uid,
-                    playerUidElement: playerUid,
-                    playerUidExists: !!playerUid,
-                    timestamp: new Date().toISOString()
-                });
-                
-                if (playerUid) {
-                    // 获取当前玩家的显示名称
-                    if (uid) {
-                        ipcRenderer.invoke('get-user-data', uid).then(userData => {
-                            const displayName = userData ? userData.displayName : uid;
-                            playerUid.textContent = displayName;
-                            playerUid.title = `UID: ${uid}`;
-                            playerUid.style.color = '#4CAF50';
-                            console.log('UID已更新到悬浮窗，当前显示:', displayName);
-                        }).catch(err => {
-                            console.error('获取用户数据失败:', err);
-                            playerUid.textContent = uid;
-                            playerUid.title = `UID: ${uid}`;
-                            playerUid.style.color = '#4CAF50';
-                        });
+            // 定时更新玩家信息和战力
+            function updatePlayerInfo() {
+                ipcRenderer.invoke('get-player-uid').then(currentUid => {
+                    if (currentUid === null || currentUid === undefined) {
+                        // 未检测到用户数据
+                        if (playerUid) {
+                            playerUid.textContent = '未检测';
+                            playerUid.title = '';
+                            playerUid.style.color = '#f44336';
+                        }
+                        if (playerFightPoint) {
+                            playerFightPoint.textContent = '未检测';
+                            playerFightPoint.style.color = '#f44336';
+                        }
                     } else {
-                        playerUid.textContent = '未检测';
+                        // 获取用户数据
+                        ipcRenderer.invoke('get-user-data', currentUid).then(userData => {
+                            const displayName = userData ? userData.displayName : currentUid;
+                            const fightPoint = userData ? userData.playerFightPoint : 0;
+                            
+                            if (playerUid) {
+                                playerUid.textContent = displayName;
+                                playerUid.title = `UID: ${currentUid}`;
+                                playerUid.style.color = '#4CAF50';
+                            }
+                            
+                            if (playerFightPoint) {
+                                if (fightPoint > 0) {
+                                    playerFightPoint.textContent = fightPoint.toLocaleString();
+                                    playerFightPoint.style.color = '#4CAF50';
+                                } else {
+                                    playerFightPoint.textContent = '未检测';
+                                    playerFightPoint.style.color = '#f44336';
+                                }
+                            }
+                        }).catch(error => {
+                            console.error('Error getting user data:', error);
+                            if (playerUid) {
+                                playerUid.textContent = '获取失败';
+                                playerUid.title = '';
+                                playerUid.style.color = '#f44336';
+                            }
+                            if (playerFightPoint) {
+                                playerFightPoint.textContent = '获取失败';
+                                playerFightPoint.style.color = '#f44336';
+                            }
+                        });
+                    }
+                }).catch(error => {
+                    console.error('Error getting current UID:', error);
+                    if (playerUid) {
+                        playerUid.textContent = '获取失败';
                         playerUid.title = '';
                         playerUid.style.color = '#f44336';
                     }
-                } else {
-                    console.error('playerUid DOM元素不存在！无法更新UID显示');
-                }
-            });
+                    if (playerFightPoint) {
+                        playerFightPoint.textContent = '获取失败';
+                        playerFightPoint.style.color = '#f44336';
+                    }
+                });
+            }
+            
+            // 立即执行一次
+            updatePlayerInfo();
+            
+            // 每隔1秒更新一次
+            setInterval(updatePlayerInfo, 1000);
 
             // 接收"仅自己"模式切换
             ipcRenderer.on('self-only-mode-changed', (event, enabled) => {
@@ -470,48 +508,7 @@
                 });
             }, updateFreency);
 
-            // 获取当前玩家UID
-            console.log('悬浮窗开始获取当前UID...');
-            ipcRenderer.invoke('get-player-uid').then(uid => {
-                console.log('悬浮窗get-player-uid响应:', {
-                    uid: uid,
-                    hasUid: !!uid,
-                    playerUidElement: playerUid,
-                    playerUidExists: !!playerUid
-                });
-                
-                if (playerUid) {
-                    if (uid) {
-                        // 获取用户数据以显示displayName
-                        ipcRenderer.invoke('get-user-data', uid).then(userData => {
-                            const displayName = userData ? userData.displayName : uid;
-                            playerUid.textContent = displayName;
-                            playerUid.title = `UID: ${uid}`;
-                            playerUid.style.color = '#4CAF50';
-                            console.log('悬浮窗主动获取UID成功，设置为:', displayName);
-                        }).catch(err => {
-                            console.error('获取用户数据失败:', err);
-                            playerUid.textContent = uid;
-                            playerUid.title = `UID: ${uid}`;
-                            playerUid.style.color = '#4CAF50';
-                        });
-                    } else {
-                        playerUid.textContent = '未检测';
-                        playerUid.title = '';
-                        playerUid.style.color = '#f44336';
-                        console.log('悬浮窗主动获取UID，但UID为空');
-                    }
-                } else {
-                    console.error('playerUid DOM元素不存在！');
-                }
-            }).catch(err => {
-                console.error('获取玩家UID失败:', err);
-                if (playerUid) {
-                    playerUid.textContent = '获取失败';
-                    playerUid.title = '';
-                    playerUid.style.color = '#f44336';
-                }
-            });
+            // 初始化时的玩家信息获取已移到updatePlayerInfo函数中
         }
 
         // 重启数据更新

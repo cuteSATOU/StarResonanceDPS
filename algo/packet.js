@@ -2,6 +2,7 @@ const zlib = require("zlib");
 const pb = require("./blueprotobuf");
 const Long = require("long");
 const pbjs = require("protobufjs/minimal");
+const pb2 = require("./BlueProtobuf_pb")
 
 class BinaryReader {
     constructor(buffer, offset = 0) {
@@ -27,6 +28,16 @@ class BinaryReader {
 
     peekUInt32() {
         return this.buffer.readUInt32BE(this.offset);
+    }
+
+    readInt32() {
+        const value = this.buffer.readInt32BE(this.offset);
+        this.offset += 4;
+        return value;
+    }
+
+    peekInt32() {
+        return this.buffer.readInt32BE(this.offset);
     }
 
     readUInt16() {
@@ -72,6 +83,8 @@ const MessageType = {
 
 const NotifyMethod = {
     SyncNearEntities: 0x00000006,
+    SyncContainerData: 0x00000015,
+    SyncContainerDirtyData: 0x00000016,
     SyncNearDeltaInfo: 0x0000002d,
     SyncToMeDeltaInfo: 0x0000002e,
 };
@@ -128,6 +141,24 @@ const getProfessionNameFromId = (professionId) => {
 const isUuidPlayer = (uuid) => {
     return (uuid.toBigInt() & 0xffffn) === 640n;
 };
+
+const doesStreamHaveIdentifier = (reader) => {
+    let identifier = reader.readInt32();
+    reader.readInt32();
+    if (identifier !== 0xfffffffe) return false;
+    identifier = reader.readInt32();
+    reader.readInt32();
+    if (identifier !== 0xfffffffd) return false;
+    return true;
+};
+
+const streamReadString = (reader) => {
+    const length = reader.readInt32();
+    reader.readInt32();
+    const buffer = reader.readBytes(length);
+    reader.readInt32();
+    return buffer.toString();
+}
 
 let currentUserUuid = Long.ZERO;
 
@@ -244,7 +275,7 @@ class PacketProcessor {
                 if (target.name) {
                     targetName = target.name;
                 } else {
-                    targetName += " (player)"
+                    targetName += " (player)";
                 }
             }
             infoStr += ` Tgt: ${targetName}`;
@@ -279,6 +310,73 @@ class PacketProcessor {
         if (!aoiSyncDelta) return;
 
         this._processAoiSyncDelta(aoiSyncDelta);
+    }
+
+    _processSyncContainerData(payloadBuffer) {
+        // for some reason protobufjs doesn't work here, we use google-protobuf instead
+        try {
+            const syncContainerData = pb2.SyncContainerData.deserializeBinary(payloadBuffer);
+            // this.logger.debug(JSON.stringify(syncContainerData, null, 2));
+
+            if (!syncContainerData.hasVdata()) return;
+            const vData = syncContainerData.getVdata();
+
+            if (!vData.hasCharid()) return;
+            const playerUid = vData.getCharid();
+
+            if (!vData.hasCharbase()) return;
+            const charBase = vData.getCharbase();
+
+            if (!charBase.hasName()) return;
+            this.userDataManager.setName(playerUid, charBase.getName());
+
+            if (!charBase.hasFightpoint()) return;
+            this.userDataManager.setFightPoint(playerUid, charBase.getFightpoint());
+        } catch (err) {
+            this.logger.warn(`Failed to decode SyncContainerData for player ${currentUserUuid.shiftRight(16)}. Please report to developer`);
+            throw err;
+        }
+    }
+
+    _processSyncContainerDirtyData(payloadBuffer) {
+        if (currentUserUuid.isZero()) return;
+
+        const syncContainerDirtyData = pb.SyncContainerDirtyData.decode(payloadBuffer);
+        if (!syncContainerDirtyData.VData || !syncContainerDirtyData.VData.Buffer) return;
+        const messageReader = new BinaryReader(Buffer.from(syncContainerDirtyData.VData.Buffer));
+
+        if (!doesStreamHaveIdentifier(messageReader)) return;
+
+        let fieldIndex = messageReader.readInt32();
+        messageReader.readInt32();
+        switch (fieldIndex) {
+            case 2: // CharBase
+                if (!doesStreamHaveIdentifier(messageReader)) break;
+
+                fieldIndex = messageReader.readInt32();
+                messageReader.readInt32();
+                switch (fieldIndex) {
+                    case 5: // Name
+                        const playerName = streamReadString(messageReader);
+                        if (!playerName || playerName === '') break;
+                        this.userDataManager.setName(currentUserUuid.shiftRight(16).toNumber(), playerName);
+                        break;
+                    case 35: // FightPoint
+                        const fightPoint = messageReader.readInt32();
+                        messageReader.readInt32();
+                        this.userDataManager.setFightPoint(currentUserUuid.shiftRight(16).toNumber(), fightPoint);
+                        break;
+                    default:
+                        // unhandle
+                        break;
+                }
+                break;
+            default:
+                // unhandle
+                break;
+        }
+
+        // this.logger.debug(syncContainerDirtyData.VData.Buffer.toString('hex'));
     }
 
     _processSyncNearEntities(payloadBuffer) {
@@ -345,6 +443,12 @@ class PacketProcessor {
             case NotifyMethod.SyncNearEntities:
                 this._processSyncNearEntities(msgPayload);
                 break;
+            case NotifyMethod.SyncContainerData:
+                this._processSyncContainerData(msgPayload);
+                break;
+            case NotifyMethod.SyncContainerDirtyData:
+                this._processSyncContainerDirtyData(msgPayload);
+                break;
             case NotifyMethod.SyncToMeDeltaInfo:
                 this._processSyncToMeDeltaInfo(msgPayload);
                 break;
@@ -405,7 +509,7 @@ class PacketProcessor {
                 }
             } while (packetsReader.remaining() > 0);
         } catch (e) {
-            this.logger.debug(e);
+            this.logger.error(`Fail while parsing data for player ${currentUserUuid.shiftRight(16)}.\nErr: ${e}`);
         }
     }
 }

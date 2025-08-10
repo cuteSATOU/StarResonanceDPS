@@ -1,5 +1,24 @@
 const { ipcRenderer } = require('electron');
 const echarts = require('echarts');
+const fs = require('fs');
+const path = require('path');
+
+// 加载技能配置
+let skillConfig = {};
+try {
+    const skillConfigPath = path.join(__dirname, '..', 'skill_config.json');
+    const skillConfigData = fs.readFileSync(skillConfigPath, 'utf8');
+    skillConfig = JSON.parse(skillConfigData);
+} catch (error) {
+    console.warn('Failed to load skill config:', error);
+    skillConfig = { skills: {} };
+}
+
+// 获取技能名称的辅助函数
+function getSkillName(skillId) {
+    const skill = skillConfig.skills && skillConfig.skills[skillId];
+    return skill && skill.name ? skill.name : `技能${skillId}`;
+}
 
 // DOM元素引用
 let statusCard, statusIndicator, currentDevice, playerUid, noDataMessage, statsContainer;
@@ -1192,7 +1211,7 @@ function updateSkillChart(chartElement, skillsData, valueKey) {
     
     // 准备数据
     const chartData = sortedSkills.map(([skillId, skillData]) => ({
-        name: `技能${skillId}`,
+        name: getSkillName(skillId),
         value: skillData[valueKey],
         skillId: skillId,
         skillData: skillData,
@@ -1355,7 +1374,7 @@ function updateSkillTable(tableBody, skillsData, type) {
         
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>技能${skillId}</td>
+            <td>${getSkillName(skillId)}</td>
             <td class="number">${formatNumber(skillData[valueKey])}</td>
             <td class="number">${percentage}%</td>
             <td class="number">${skillData.count}</td>

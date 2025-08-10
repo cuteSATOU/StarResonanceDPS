@@ -23,6 +23,7 @@
     "cap": "^0.2.1",
     "echarts": "^6.0.0",
     "electron-squirrel-startup": "^1.0.1",
+    "google-protobuf": "^3.21.4",
     "protobufjs": "^7.2.5",
     "winston": "^3.11.0"
   },
