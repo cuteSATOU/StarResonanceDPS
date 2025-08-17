@@ -100,7 +100,9 @@ body {
     background: var(--bg-glass);
     backdrop-filter: blur(20px);
     border-radius: var(--radius-xl);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15), 
+                0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     overflow: hidden;
     min-width: 280px;
     max-width: 500px;
@@ -111,6 +113,8 @@ body {
     position: relative;
     margin: 0;
     padding: 0;
+    transition: all var(--transition-normal);
+    transform: translateY(0);
 }
 
 /* Overlay Header */
@@ -201,29 +205,49 @@ body {
 }
 
 .dps-item {
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(15px);
     border-radius: var(--radius-lg);
     padding: var(--space-sm) var(--space-md);
     border-left: 4px solid var(--primary-color);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     transition: all var(--transition-normal);
+    position: relative;
+    overflow: hidden;
 }
 
 .dps-item:hover {
-    background: rgba(255, 255, 255, 0.9);
-    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.95);
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
 }
 
 .dps-item.primary {
     border-left-color: var(--primary-color);
 }
 
+.dps-item.primary:hover {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15), 
+                0 0 20px rgba(99, 102, 241, 0.3);
+}
+
 .dps-item.secondary {
     border-left-color: var(--danger-color);
 }
 
+.dps-item.secondary:hover {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15), 
+                0 0 20px rgba(239, 68, 68, 0.3);
+}
+
 .dps-item.tertiary {
     border-left-color: var(--success-color);
+}
+
+.dps-item.tertiary:hover {
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15), 
+                0 0 20px rgba(16, 185, 129, 0.3);
 }
 
 .dps-label {
@@ -257,6 +281,24 @@ body {
     border-radius: 2px;
     transition: width var(--transition-normal);
     width: 0%;
+    position: relative;
+    overflow: hidden;
+}
+
+.dps-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { left: -100%; }
+    100% { left: 100%; }
 }
 
 .dps-bar-fill.max {
@@ -269,11 +311,13 @@ body {
 
 /* DPS Details */
 .dps-details {
-    background: rgba(255, 255, 255, 0.6);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(15px);
     border-radius: var(--radius-lg);
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: all var(--transition-normal);
 }
 
 .details-header {
@@ -341,10 +385,13 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: var(--bg-glass);
-    backdrop-filter: blur(20px);
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(25px);
     z-index: 10;
     animation: slideIn var(--transition-normal);
+    border-radius: var(--radius-xl);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
 }
 
 @keyframes slideIn {

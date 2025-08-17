@@ -8,6 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+
     <div class="app">
         <!-- 顶部导航栏 -->
         <nav class="navbar">
@@ -71,7 +72,7 @@
                                 </select>
                             </div>
                             <div class="control-actions">
-                                <button id="refreshDeviceBtn" class="btn btn-outline btn-sm" title="刷新设备列表">
+                                <button id="refreshDeviceBtn" class="btn btn-outline" title="刷新设备列表">
                                     <span class="btn-icon">🔄</span>
                                     刷新
                                 </button>
@@ -519,6 +520,21 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 确认弹窗 -->
+    <div id="confirmDialog" class="confirm-dialog-overlay">
+        <div class="confirm-dialog">
+            <div class="confirm-dialog-icon">
+                ⚠️
+            </div>
+            <h3 class="confirm-dialog-title">确认操作</h3>
+            <p class="confirm-dialog-message">确定要清除所有统计数据吗？此操作无法撤销。</p>
+            <div class="confirm-dialog-actions">
+                <button class="confirm-dialog-btn confirm-dialog-btn-cancel" id="confirmCancel">取消</button>
+                <button class="confirm-dialog-btn confirm-dialog-btn-confirm" id="confirmOk">确认清除</button>
             </div>
         </div>
     </div>

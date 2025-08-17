@@ -70,6 +70,21 @@
         </div>
     </div>
 
+    <!-- 确认弹窗 -->
+    <div id="confirmDialog" class="confirm-dialog-overlay">
+        <div class="confirm-dialog">
+            <div class="confirm-dialog-icon">
+                ⚠️
+            </div>
+            <h3 class="confirm-dialog-title">确认操作</h3>
+            <p class="confirm-dialog-message">确定要清除所有日志吗？此操作无法撤销。</p>
+            <div class="confirm-dialog-actions">
+                <button class="confirm-dialog-btn confirm-dialog-btn-cancel" id="confirmCancel">取消</button>
+                <button class="confirm-dialog-btn confirm-dialog-btn-confirm" id="confirmOk">确认清除</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const { ipcRenderer } = require('electron');
 
@@ -104,12 +119,12 @@
 
             // 清除日志
             clearLogBtn.addEventListener('click', () => {
-                if (confirm('确定要清除所有日志吗？')) {
+                showConfirmDialog('确定要清除所有日志吗？此操作无法撤销。', () => {
                     logMessages = [];
                     logContent.innerHTML = '';
                     updateLogCount();
                     addLogMessage('info', '日志已清除');
-                }
+                });
             });
 
             // 导出日志
@@ -235,6 +250,56 @@
             URL.revokeObjectURL(url);
 
             addLogMessage('info', '日志已导出');
+        }
+
+        // 自定义确认弹窗函数
+        function showConfirmDialog(message, onConfirm, title = '确认操作') {
+            const overlay = document.getElementById('confirmDialog');
+            const titleElement = overlay.querySelector('.confirm-dialog-title');
+            const messageElement = overlay.querySelector('.confirm-dialog-message');
+            const cancelBtn = document.getElementById('confirmCancel');
+            const confirmBtn = document.getElementById('confirmOk');
+            
+            // 设置内容
+            titleElement.textContent = title;
+            messageElement.textContent = message;
+            
+            // 显示弹窗
+            overlay.classList.add('show');
+            
+            // 确保移除之前的事件监听器
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            const newConfirmBtn = confirmBtn.cloneNode(true);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+            confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+            
+            // 绑定事件
+            newCancelBtn.addEventListener('click', () => {
+                overlay.classList.remove('show');
+            });
+            
+            newConfirmBtn.addEventListener('click', () => {
+                overlay.classList.remove('show');
+                if (onConfirm) {
+                    onConfirm();
+                }
+            });
+            
+            // 点击背景关闭
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove('show');
+                }
+            });
+            
+            // ESC键关闭
+            const handleEscape = (e) => {
+                if (e.key === 'Escape' && overlay.classList.contains('show')) {
+                    overlay.classList.remove('show');
+                    document.removeEventListener('keydown', handleEscape);
+                }
+            };
+            document.addEventListener('keydown', handleEscape);
         }
 
         // 页面加载完成后初始化

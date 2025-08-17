@@ -76,6 +76,8 @@ body {
     background: var(--bg-transparent-black);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 
+                0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     overflow: hidden;
     min-width: 350px;
     min-height: 145px;
@@ -90,6 +92,7 @@ body {
     flex-direction: column;
     /* 设置鼠标穿透 */
     pointer-events: none;
+    transition: all var(--transition-normal);
 }
 
 /* 头部区域 */
@@ -184,19 +187,23 @@ body {
 .ranking-item {
     background: var(--bg-transparent-light);
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: var(--space-sm);
-    transition: background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+    transition: all var(--transition-fast);
     position: relative;
     overflow: hidden;
     min-height: 45px;
     flex-shrink: 0;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    transform: translateX(0);
 }
 
 .ranking-item:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.1);
     border-color: var(--damage-bar-color);
-    /* 移除发光效果 */
+    transform: translateX(4px) scale(1.02);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
 /* 第一名特殊样式 */
@@ -319,9 +326,25 @@ body {
     height: 100%;
     background: linear-gradient(90deg, var(--damage-bar-color), rgba(255, 100, 100, 0.8));
     border-radius: var(--radius-sm);
-    transition: none;
+    transition: width var(--transition-normal);
     position: relative;
-    /* 移除默认发光效果 */
+    overflow: hidden;
+}
+
+.damage-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    animation: rankingShimmer 3s infinite;
+}
+
+@keyframes rankingShimmer {
+    0% { left: -100%; }
+    100% { left: 100%; }
 }
 
 /* 移除进度条流光效果 */

@@ -151,6 +151,36 @@
             font-weight: 600;
         }
 
+        .device-item.recommended {
+            border: 2px solid #10b981;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(16, 185, 129, 0.05));
+            position: relative;
+        }
+
+        .device-item.recommended::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(135deg, #10b981, #059669);
+            border-radius: 8px;
+            z-index: -1;
+            opacity: 0.6;
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+
+        .device-item.recommended .device-name {
+            color: #059669;
+            font-weight: 600;
+        }
+
+        @keyframes glow {
+            from { opacity: 0.6; }
+            to { opacity: 0.8; }
+        }
+
         .device-info {
             flex: 1;
             min-width: 0;
@@ -343,8 +373,10 @@
         // 加载设备列表
         async function loadDevices() {
             try {
-                devices = await ipcRenderer.invoke('get-devices');
-                displayDevices(devices);
+                const result = await ipcRenderer.invoke('get-devices');
+                devices = result.devices || [];
+                const recommendedIndex = result.recommendedIndex;
+                displayDevices(devices, recommendedIndex);
             } catch (error) {
                 console.error('获取设备列表失败:', error);
                 showError('获取设备列表失败', error.message);
@@ -352,7 +384,7 @@
         }
 
         // 显示设备列表
-        function displayDevices(devices) {
+        function displayDevices(devices, recommendedIndex = null) {
             const deviceList = document.getElementById('deviceList');
             
             if (devices.length === 0) {
@@ -360,19 +392,29 @@
                 return;
             }
 
-            const deviceItems = devices.map(device => `
-                <div class="device-item" data-index="${device.index}">
-                    <div class="device-radio">
-                        <input type="radio" name="device" value="${device.index}" id="device_${device.index}">
+            const deviceItems = devices.map(device => {
+                const isRecommended = device.index === recommendedIndex;
+                return `
+                    <div class="device-item${isRecommended ? ' recommended' : ''}" data-index="${device.index}">
+                        <div class="device-radio">
+                            <input type="radio" name="device" value="${device.index}" id="device_${device.index}"${isRecommended ? ' checked' : ''}>
+                        </div>
+                        <div class="device-info">
+                            <div class="device-name">
+                                ${isRecommended ? '🌟 ' : ''}${escapeHtml(device.description)}${isRecommended ? ' (推荐)' : ''}
+                            </div>
+                            <div class="device-details">${escapeHtml(device.name)}</div>
+                        </div>
                     </div>
-                    <div class="device-info">
-                        <div class="device-name">${escapeHtml(device.description)}</div>
-                        <div class="device-details">${escapeHtml(device.name)}</div>
-                    </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
 
             deviceList.innerHTML = deviceItems;
+
+            // 如果有推荐设备，自动选择它
+            if (recommendedIndex !== null && recommendedIndex >= 0) {
+                selectDevice(recommendedIndex);
+            }
 
             // 添加点击事件
             document.querySelectorAll('.device-item').forEach(item => {
