@@ -705,17 +705,51 @@ function createRankingOverlayWindow() {
 }
 
 // 获取设备列表
-function getDeviceList() {
+async function getDeviceList() {
     try {
         devices = cap.deviceList();
-        return devices.map((device, index) => ({
+        const deviceList = devices.map((device, index) => ({
             index,
             name: device.name,
-            description: device.description
+            description: device.description,
+            addresses: device.addresses || []
         }));
+
+        // 尝试自动选择默认网卡
+        const findDefaultNetworkDevice = require('./algo/netInterfaceUtil');
+        let recommendedIndex = null;
+        
+        try {
+            // 构建设备对象，用于findDefaultNetworkDevice函数
+            const deviceMap = {};
+            devices.forEach((device, index) => {
+                deviceMap[device.name] = {
+                    addresses: device.addresses || []
+                };
+            });
+            
+            const defaultDeviceName = await findDefaultNetworkDevice(deviceMap);
+            if (defaultDeviceName) {
+                // 找到推荐设备的索引
+                recommendedIndex = devices.findIndex(device => device.name === defaultDeviceName);
+                if (recommendedIndex !== -1) {
+                    logger.info(`自动推荐网络设备: ${devices[recommendedIndex].description} (索引: ${recommendedIndex})`);
+                }
+            }
+        } catch (autoSelectError) {
+            logger.warn('自动选择网卡失败:', autoSelectError);
+        }
+
+        return {
+            devices: deviceList,
+            recommendedIndex
+        };
     } catch (error) {
         logger.error('获取设备列表失败:', error);
-        return [];
+        return {
+            devices: [],
+            recommendedIndex: null
+        };
     }
 }
 
@@ -1501,8 +1535,8 @@ function startTcpCleanupTimer() {
 }
 
 // IPC事件处理
-ipcMain.handle('get-devices', () => {
-    return getDeviceList();
+ipcMain.handle('get-devices', async () => {
+    return await getDeviceList();
 });
 
 ipcMain.handle('start-capture', (event, deviceIndex) => {

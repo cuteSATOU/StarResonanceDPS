@@ -107,7 +107,7 @@ function bindEventListeners() {
     });
 
     clearStatsBtn.addEventListener('click', async () => {
-        if (confirm('确定要清除所有统计数据吗？')) {
+        showConfirmDialog('确定要清除所有统计数据吗？此操作无法撤销。', async () => {
             try {
                 await ipcRenderer.invoke('clear-stats');
                 statsData = {};
@@ -115,7 +115,7 @@ function bindEventListeners() {
             } catch (error) {
                 console.error('清除统计失败:', error);
             }
-        }
+        });
     });
 
     // 显示日志窗口
@@ -641,7 +641,9 @@ async function loadDeviceList() {
         deviceSelect.disabled = true;
         deviceSelect.innerHTML = '<option value="">正在加载设备...</option>';
         
-        const devices = await ipcRenderer.invoke('get-devices');
+        const result = await ipcRenderer.invoke('get-devices');
+        const devices = result.devices || [];
+        const recommendedIndex = result.recommendedIndex;
         
         deviceSelect.innerHTML = '<option value="">请选择网络设备</option>';
         
@@ -654,15 +656,29 @@ async function loadDeviceList() {
         devices.forEach(device => {
             const option = document.createElement('option');
             option.value = device.index;
-            option.textContent = device.description;
+            
+            // 如果是推荐设备，添加推荐标识
+            if (device.index === recommendedIndex) {
+                option.textContent = `🌟 ${device.description} (推荐)`;
+            } else {
+                option.textContent = device.description;
+            }
+            
             option.title = device.name;
             deviceSelect.appendChild(option);
         });
         
+        // 自动选择推荐设备
+        if (recommendedIndex !== null && recommendedIndex >= 0) {
+            deviceSelect.value = recommendedIndex;
+            startCaptureBtn.disabled = false;
+            console.info(`已自动选择推荐网络设备: ${devices.find(d => d.index === recommendedIndex)?.description}`);
+        } else {
+            startCaptureBtn.disabled = true;
+        }
+        
         deviceSelect.disabled = false;
-        // 确保开始按钮初始状态为禁用
-        startCaptureBtn.disabled = true;
-        console.info(`已加载 ${devices.length} 个网络设备`);
+        console.info(`已加载 ${devices.length} 个网络设备${recommendedIndex !== null ? '，已自动选择推荐设备' : ''}`);
         
     } catch (error) {
         deviceSelect.innerHTML = '<option value="">加载失败</option>';
@@ -808,9 +824,60 @@ window.addEventListener('beforeunload', (event) => {
     }
 });
 
+// 自定义确认弹窗函数
+function showConfirmDialog(message, onConfirm, title = '确认操作') {
+    const overlay = document.getElementById('confirmDialog');
+    const titleElement = overlay.querySelector('.confirm-dialog-title');
+    const messageElement = overlay.querySelector('.confirm-dialog-message');
+    const cancelBtn = document.getElementById('confirmCancel');
+    const confirmBtn = document.getElementById('confirmOk');
+    
+    // 设置内容
+    titleElement.textContent = title;
+    messageElement.textContent = message;
+    
+    // 显示弹窗
+    overlay.classList.add('show');
+    
+    // 确保移除之前的事件监听器
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    
+    // 绑定事件
+    newCancelBtn.addEventListener('click', () => {
+        overlay.classList.remove('show');
+    });
+    
+    newConfirmBtn.addEventListener('click', async () => {
+        overlay.classList.remove('show');
+        if (onConfirm) {
+            await onConfirm();
+        }
+    });
+    
+    // 点击背景关闭
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            overlay.classList.remove('show');
+        }
+    });
+    
+    // ESC键关闭
+    const handleEscape = (e) => {
+        if (e.key === 'Escape' && overlay.classList.contains('show')) {
+            overlay.classList.remove('show');
+            document.removeEventListener('keydown', handleEscape);
+        }
+    };
+    document.addEventListener('keydown', handleEscape);
+}
+
 // 导出一些函数供调试使用
 window.debugAPI = {
     getStatsData: () => statsData,
+    showConfirmDialog: showConfirmDialog,
     addTestData: () => {
         // 添加测试数据用于开发调试
         const testData = {
