@@ -11,7 +11,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
-    "dev": "NODE_ENV=development electron .",
+    "dev": "electron . --dev",
     "build": "electron-builder",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
