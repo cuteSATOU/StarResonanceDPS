@@ -204,6 +204,14 @@ body {
     margin-bottom: var(--space-md);
 }
 
+/* HPS Main Display */
+.hps-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+}
+
 .dps-item {
     background: rgba(255, 255, 255, 0.8);
     backdrop-filter: blur(15px);
