@@ -1582,6 +1582,12 @@ ipcMain.handle('window-maximize', () => {
 
 ipcMain.handle('window-close', () => {
     if (mainWindow) {
+        // 如果正在抓包，先停止抓包
+        if (isCapturing) {
+            stopCapture();
+        }
+        // 停止数据更新定时器
+        stopDataUpdateTimers();
         // 设置标志表示是主窗口退出导致的关闭
         app.isMainWindowClosing = true;
         // 主动关闭悬浮窗，但不保存配置
