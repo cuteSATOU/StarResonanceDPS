@@ -1885,9 +1885,9 @@ app.whenReady().then(() => {
     
     // 注册全局快捷键
     try {
-        // F10: 清空数据
-        globalShortcut.register('F10', () => {
-            logger.info('F10 pressed - clearing stats data');
+        // Ctrl+F10: 清空数据
+        globalShortcut.register('CommandOrControl+F10', () => {
+            logger.info('Ctrl+F10 pressed - clearing stats data');
             clearStats();
             // 通知所有窗口数据已清空
             if (mainWindow && mainWindow.webContents) {
@@ -1901,11 +1901,11 @@ app.whenReady().then(() => {
             }
         });
         
-        // F11: 切换只看自己/看全队模式
-        globalShortcut.register('F11', () => {
+        // Ctrl+F11: 切换只看自己/看全队模式
+        globalShortcut.register('CommandOrControl+F11', () => {
             selfOnlyMode = !selfOnlyMode;
             updateConfig('selfOnlyMode', selfOnlyMode);
-            logger.info(`F11 pressed - toggled self-only mode to: ${selfOnlyMode}`);
+            logger.info(`Ctrl+F11 pressed - toggled self-only mode to: ${selfOnlyMode}`);
             // 通知所有窗口模式已切换
             if (mainWindow && mainWindow.webContents) {
                 mainWindow.webContents.send('self-only-mode-changed', selfOnlyMode);
@@ -1940,7 +1940,7 @@ app.whenReady().then(() => {
             }
         });
         
-        logger.info('Global shortcuts registered: F10 (clear data), F11 (toggle self-only mode), Ctrl+F12 (toggle dev tools)');
+        logger.info('Global shortcuts registered: Ctrl+F10 (clear data), Ctrl+F11 (toggle self-only mode), Ctrl+F12 (toggle dev tools)');
     } catch (error) {
         logger.error('Failed to register global shortcuts:', error);
     }
