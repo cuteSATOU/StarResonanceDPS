@@ -200,6 +200,15 @@ function bindEventListeners() {
             }
         });
     }
+
+    // 表格排序功能
+    const sortableHeaders = statsTable.querySelectorAll('th.sortable');
+    sortableHeaders.forEach(header => {
+        header.addEventListener('click', () => {
+            const sortKey = header.getAttribute('data-sort');
+            sortTable(sortKey);
+        });
+    });
 }
 
 // IPC事件监听
@@ -241,14 +250,14 @@ function bindIpcListeners() {
         updateRankingOverlayButton(enabled);
     });
     
-    // 接收数据清空事件（F10快捷键触发）
+    // 接收数据清空事件（Ctrl+F10快捷键触发）
     ipcRenderer.on('stats-cleared', (event) => {
         console.log('收到数据清空事件');
         statsData = {};
         updateStatsDisplay();
     });
     
-    // 接收模式切换事件（F11快捷键触发）
+    // 接收模式切换事件（Ctrl+F11快捷键触发）
     ipcRenderer.on('self-only-mode-changed', (event, enabled) => {
         console.log('收到模式切换事件:', enabled);
         selfOnlyMode = enabled;
@@ -429,11 +438,31 @@ function updateStatsDisplay() {
 function updateStatsTable() {
     const tbody = statsTable.querySelector('tbody');
     
-    let userIds = Object.keys(statsData).sort();
+    let userIds = Object.keys(statsData);
     
     // 如果是"仅自己"模式，只显示当前玩家的数据
     if (selfOnlyMode && currentPlayerUid) {
         userIds = userIds.filter(uid => uid === currentPlayerUid);
+    }
+    
+    // 应用排序
+    if (currentSortKey) {
+        userIds.sort((a, b) => {
+            const valueA = getSortValue(statsData[a], currentSortKey);
+            const valueB = getSortValue(statsData[b], currentSortKey);
+            
+            let comparison = 0;
+            if (typeof valueA === 'string' && typeof valueB === 'string') {
+                comparison = valueA.localeCompare(valueB);
+            } else {
+                comparison = valueA - valueB;
+            }
+            
+            return currentSortDirection === 'desc' ? -comparison : comparison;
+        });
+    } else {
+        // 默认按UID排序
+        userIds.sort();
     }
     
     // 获取现有的行，避免完全重新渲染
@@ -504,6 +533,79 @@ function updateStatsTable() {
         if (isNewRow) {
             tbody.appendChild(row);
         }
+    }
+}
+
+// 表格排序状态
+let currentSortKey = null;
+let currentSortDirection = 'desc'; // 'asc' 或 'desc'
+
+// 表格排序函数
+function sortTable(sortKey) {
+    // 如果点击的是同一列，切换排序方向
+    if (currentSortKey === sortKey) {
+        currentSortDirection = currentSortDirection === 'desc' ? 'asc' : 'desc';
+    } else {
+        // 如果是新列，默认降序排列
+        currentSortKey = sortKey;
+        currentSortDirection = 'desc';
+    }
+    
+    // 更新排序图标
+    updateSortIcons(sortKey, currentSortDirection);
+    
+    // 重新渲染表格
+    updateStatsTable();
+}
+
+// 更新排序图标
+function updateSortIcons(activeSortKey, direction) {
+    const sortableHeaders = statsTable.querySelectorAll('th.sortable');
+    sortableHeaders.forEach(header => {
+        const sortIcon = header.querySelector('.sort-icon');
+        const headerSortKey = header.getAttribute('data-sort');
+        
+        if (headerSortKey === activeSortKey) {
+            sortIcon.textContent = direction === 'desc' ? '↓' : '↑';
+            sortIcon.style.opacity = '1';
+        } else {
+            sortIcon.textContent = '↕️';
+            sortIcon.style.opacity = '0.5';
+        }
+    });
+}
+
+// 获取排序值
+function getSortValue(userData, sortKey) {
+    switch (sortKey) {
+        case 'uid':
+            // 如果有displayName就用displayName，否则用UID，但在UID前加前缀确保排序时不会在最前面
+            return userData.displayName || (userData.uid ? 'UID_' + userData.uid : 'zzz_unknown');
+        case 'role':
+            return getRoleNameBySkills(userData.skills);
+        case 'fightpoint':
+            return userData.playerFightPoint || 0;
+        case 'realtime':
+            return userData.realtime_dps || 0;
+        case 'max':
+            return userData.realtime_dps_max || 0;
+        case 'avg':
+            return userData.total_dps || 0;
+        case 'total':
+            return userData.total_damage?.total || 0;
+        case 'crit-rate':
+            const count = userData.total_count;
+            return count?.total > 0 ? count.critical / count.total : 0;
+        case 'realtime-hps':
+            return userData.realtime_hps || 0;
+        case 'max-hps':
+            return userData.realtime_hps_max || 0;
+        case 'avg-hps':
+            return userData.total_hps || 0;
+        case 'total-healing':
+            return userData.total_healing?.total || 0;
+        default:
+            return 0;
     }
 }
 
