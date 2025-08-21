@@ -2833,6 +2833,7 @@ function formatReleaseNotes(notes) {
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         // 处理斜体
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/\_(.+?)\_/g, '<em>$1</em>')
         // 处理代码
         .replace(/`(.+?)`/g, '<code>$1</code>')
         // 处理链接
