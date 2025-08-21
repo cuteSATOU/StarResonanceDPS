@@ -1,5 +1,5 @@
 {
-  "name": "stardps",
+  "name": "star-resonance-dps",
   "version": "1.0.0",
   "description": "星痕共鸣第三方DPS统计工具",
   "license": "AGPL-3.0",
@@ -48,9 +48,11 @@
     },
     "files": [
       "main.js",
-      "src/**/*",
       "algo/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "assets/**/*",
+      "public/**/*",
+      "core/**/*"
     ],
     "win": {
       "icon": "assets/icon.ico",
