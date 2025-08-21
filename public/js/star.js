@@ -2718,10 +2718,20 @@ async function checkForUpdates() {
 }
 
 // 显示更新弹窗
+// 处理弹窗点击事件的函数
+function handleModalClick(event) {
+    if (event.target === event.currentTarget) {
+        closeUpdateModal();
+    }
+}
+
 function showUpdateModal() {
     const modal = document.getElementById('updateModal');
     modal.classList.add('show');
     modal.style.display = 'flex';
+    
+    // 添加点击外部区域关闭弹窗的事件监听器
+    modal.addEventListener('click', handleModalClick);
 }
 
 // 关闭更新弹窗
@@ -2729,6 +2739,9 @@ function closeUpdateModal() {
     const modal = document.getElementById('updateModal');
     modal.classList.remove('show');
     modal.style.display = 'none';
+    
+    // 移除点击外部区域关闭弹窗的事件监听器
+    modal.removeEventListener('click', handleModalClick);
     
     // 清空内容
     document.getElementById('updateModalBody').innerHTML = '';
