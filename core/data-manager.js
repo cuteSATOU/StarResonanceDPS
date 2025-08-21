@@ -309,6 +309,7 @@ class UserData {
     /** 获取用户数据摘要 */
     getSummary() {
         return {
+            uid: this.uid,
             realtime_dps: this.damageStats.realtimeStats.value,
             realtime_dps_max: this.damageStats.realtimeStats.max,
             total_dps: this.getTotalDps(),

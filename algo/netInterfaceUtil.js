@@ -6,7 +6,7 @@ const VIRTUAL_KEYWORDS = ['zerotier', 'vmware', 'hyper-v', 'virtual', 'loopback'
 
 function isVirtual(name) {
     const lower = name.toLowerCase();
-    return VIRTUAL_KEYWORDS.some(keyword => lower.includes(keyword));
+    return VIRTUAL_KEYWORDS.some((keyword) => lower.includes(keyword));
 }
 
 // Detect TCP traffic for 3 seconds
@@ -16,16 +16,18 @@ function detectTraffic(deviceIndex, devices) {
         try {
             const c = new cap.Cap();
             const buffer = Buffer.alloc(65535);
-            
+
             const cleanup = () => {
-                try { c.close(); } catch (e) {}
+                try {
+                    c.close();
+                } catch (e) {}
             };
-            
+
             setTimeout(() => {
                 cleanup();
                 resolve(count);
             }, 3000);
-            
+
             if (c.open(devices[deviceIndex].name, 'ip and tcp', 1024 * 1024, buffer) === 'ETHERNET') {
                 c.setMinBytes && c.setMinBytes(0);
                 c.on('packet', () => count++);
@@ -73,37 +75,36 @@ async function findDefaultNetworkDevice(devices) {
             const name = device.description || device.name || '';
             return !isVirtual(name) && device.addresses && device.addresses.length > 0;
         });
-        
+
         if (physical.length === 0) {
             return await findByRoute(devices);
         }
-        
+
         // Detect traffic on physical adapters
         console.log('Detecting network traffic... (3s)');
         const results = await Promise.all(
             physical.map(async ([index]) => ({
                 index: parseInt(index),
-                packets: await detectTraffic(parseInt(index), devices)
-            }))
+                packets: await detectTraffic(parseInt(index), devices),
+            })),
         );
-        
+
         // Select adapter with most traffic
-        const best = results.filter(r => r.packets > 0).sort((a, b) => b.packets - a.packets)[0];
-        
+        const best = results.filter((r) => r.packets > 0).sort((a, b) => b.packets - a.packets)[0];
+
         if (best) {
             console.log(`Using adapter with most traffic: ${best.index} - ${devices[best.index].description} (${best.packets} packets)`);
             return best.index;
         }
-        
+
         // Fallback to route table
         const routeIndex = await findByRoute(devices);
         if (routeIndex !== undefined && devices[routeIndex] && isVirtual(devices[routeIndex].description || '')) {
             console.log('Route table selected virtual adapter, using first physical adapter instead');
             return parseInt(physical[0][0]);
         }
-        
+
         return routeIndex;
-        
     } catch (error) {
         return undefined;
     }

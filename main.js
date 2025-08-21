@@ -83,8 +83,20 @@ class ElectronDamageCounter {
         });
 
         // 开发环境下打开开发者工具
-        if (process.env.NODE_ENV === 'development') {
+        const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+        if (isDev) {
             this.mainWindow.webContents.openDevTools();
+            
+            // 添加F12快捷键支持
+            this.mainWindow.webContents.on('before-input-event', (event, input) => {
+                if (input.key === 'F12') {
+                    if (this.mainWindow.webContents.isDevToolsOpened()) {
+                        this.mainWindow.webContents.closeDevTools();
+                    } else {
+                        this.mainWindow.webContents.openDevTools();
+                    }
+                }
+            });
         }
     }
 
@@ -135,7 +147,7 @@ class ElectronDamageCounter {
         }
 
         const windowOptions = {
-            width: 400,
+            width: 500,
             height: 600,
             frame: false,
             transparent: true,
@@ -166,6 +178,20 @@ class ElectronDamageCounter {
 
         this.hpWindow.once('ready-to-show', () => {
             this.hpWindow.show();
+            
+            // 开发环境下为悬浮窗添加F12快捷键支持
+            const isDev = process.env.NODE_ENV === 'development' || process.argv.includes('--dev');
+            if (isDev) {
+                this.hpWindow.webContents.on('before-input-event', (event, input) => {
+                    if (input.key === 'F12') {
+                        if (this.hpWindow.webContents.isDevToolsOpened()) {
+                            this.hpWindow.webContents.closeDevTools();
+                        } else {
+                            this.hpWindow.webContents.openDevTools();
+                        }
+                    }
+                });
+            }
         });
 
         // 监听窗口移动事件，实时保存位置
@@ -465,8 +491,10 @@ class ElectronDamageCounter {
                             hp: user.hp,
                             maxHp: user.maxHp,
                             hpPercent: user.maxHp > 0 ? (user.hp / user.maxHp * 100) : 0,
-                            dps: user.dps || 0,
-                            hps: user.hps || 0,
+                            dps: user.total_dps || 0,
+                            hps: user.total_hps || 0,
+                            totalDamage: user.total_damage || 0,
+                            totalHealing: user.total_healing || 0,
                             isAlive: user.hp > 0
                         })),
                         connected: this.isCapturing && !this.packetCapture.getPausedState()

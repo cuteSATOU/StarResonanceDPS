@@ -26,12 +26,11 @@ function initializeIPC() {
     if (window.electronAPI) {
         // 监听玩家数据更新
         window.electronAPI.onPlayerDataUpdate((data) => {
-            if (!isPaused && data && data.user) {
-                processData(data.user);
+            console.log('悬浮窗接收到数据:', data);
+            if (!isPaused && data && data.players) {
+                processData(data.players);
             }
         });
-
-
 
         // 请求初始数据
         window.electronAPI.requestPlayerData();
@@ -68,32 +67,29 @@ function initializeWindowControls() {
 // 判断角色是否未参与战斗
 function isUserInactive(user) {
     // 检查总伤害、总DPS、总HPS是否都为0
-    const totalDamage = user.total_damage?.total || 0;
-    const totalDps = user.total_dps || 0;
-    const totalHps = user.total_hps || 0;
+    const totalDamage = user.totalDamage || 0;
+    const totalDps = user.dps || 0;
+    const totalHps = user.hps || 0;
+    const totalHealing = user.totalHealing || 0;
 
-    // 检查暴击率和幸运率是否为NaN
-    const critRate = user.total_count?.critical / user.total_count?.total;
-    const luckyRate = user.total_count?.lucky / user.total_count?.total;
-
-    return (totalDamage === 0 && totalDps === 0 && totalHps === 0) || (isNaN(critRate) && isNaN(luckyRate));
+    // 如果总伤害、总DPS、总HPS、总治疗都为0，则认为是非活跃用户
+    return (totalDamage === 0 && totalDps === 0 && totalHps === 0 && totalHealing === 0);
 }
 
 // 处理数据
-function processData(users) {
-    users = Object.entries(users)
-        .map(([id, user]) => ({ ...user, id }))
-        .filter((user) => !isUserInactive(user));
-    if (!Array.isArray(users)) return;
+function processData(players) {
+    try {
+        // 过滤掉非活跃用户
+        const activePlayers = players.filter(player => !isUserInactive(player));
 
-    // 过滤出有血量数据的用户，最多20个
-    let validUsers = users.filter((user) => user.hp !== undefined && user.max_hp !== undefined && user.max_hp > 0).slice(0, 20);
-
-    // 排序
-    validUsers = sortPlayers(validUsers);
-
-    currentPlayers = validUsers;
-    updateUI();
+        currentPlayers = activePlayers.slice(0, 20);
+        const sortedPlayers = sortPlayers(currentPlayers);
+        currentPlayers = sortedPlayers;
+        
+        updateUI();
+    } catch (error) {
+        console.error('processData error:', error);
+    }
 }
 
 // 排序玩家
@@ -101,8 +97,8 @@ function sortPlayers(players) {
     switch (currentSortMode) {
         case 'hp':
             return players.sort((a, b) => {
-                const hpPercentA = (a.hp / a.max_hp) * 100;
-                const hpPercentB = (b.hp / b.max_hp) * 100;
+                const hpPercentA = (a.hp / a.maxHp) * 100;
+                const hpPercentB = (b.hp / b.maxHp) * 100;
                 return hpPercentA - hpPercentB; // 血量低的在前
             });
         case 'name':
@@ -112,9 +108,9 @@ function sortPlayers(players) {
                 return nameA.localeCompare(nameB);
             });
         case 'dps':
-            return players.sort((a, b) => (b.total_dps || 0) - (a.total_dps || 0));
+            return players.sort((a, b) => (b.dps || 0) - (a.dps || 0));
         case 'hps':
-            return players.sort((a, b) => (b.total_hps || 0) - (a.total_hps || 0));
+            return players.sort((a, b) => (b.hps || 0) - (a.hps || 0));
         default:
             return players;
     }
@@ -135,67 +131,83 @@ function updatePlayerCount() {
 
 // 渲染玩家卡片
 function renderPlayerCards() {
-    const grid = document.getElementById('playerGrid');
-    const noDataElement = grid.querySelector('.no-data');
+    try {
+        const grid = document.getElementById('playerGrid');
+        if (!grid) {
+            console.error('renderPlayerCards: playerGrid element not found');
+            return;
+        }
+        
+        const noDataElement = grid.querySelector('.no-data');
 
-    if (currentPlayers.length === 0) {
-        // 隐藏所有卡片
-        playerCards.forEach((card, index) => {
-            setTimeout(() => {
-                card.style.display = 'none';
-            }, index * 20);
+        if (currentPlayers.length === 0) {
+            // 隐藏所有卡片
+            playerCards.forEach((card, index) => {
+                setTimeout(() => {
+                    card.style.display = 'none';
+                }, index * 20);
+            });
+
+            // 显示无数据提示
+            if (noDataElement) {
+                setTimeout(
+                    () => {
+                        noDataElement.style.display = 'block';
+                    },
+                    playerCards.length * 20 + 100,
+                );
+            }
+            return;
+        }
+
+        // 隐藏无数据提示
+        if (noDataElement) {
+            noDataElement.style.display = 'none';
+        }
+
+         // 更新现有卡片内容并显示
+         currentPlayers.forEach((player, index) => {
+            console.log(`Processing player ${index}:`, player.name);
+            if (index < playerCards.length) {
+                const card = playerCards[index];
+                if (!card) {
+                    console.error(`Card at index ${index} is null`);
+                    return;
+                }
+
+                // 如果卡片当前隐藏，先显示再更新内容
+                if (card.style.display === 'none') {
+                    card.style.display = 'flex';
+                    card.style.opacity = '0';
+                    card.style.transform = 'translateY(20px)';
+
+                    // 延迟显示动画
+                    setTimeout(() => {
+                        card.style.opacity = '1';
+                        card.style.transform = 'translateY(0)';
+                    }, index * 50);
+                }
+
+                updatePlayerCard(card, player, index);
+            } else {
+                console.warn(`Player index ${index} exceeds playerCards length ${playerCards.length}`);
+            }
         });
 
-        // 显示无数据提示
-        if (noDataElement) {
-            setTimeout(
-                () => {
-                    noDataElement.style.display = 'block';
-                },
-                playerCards.length * 20 + 100,
-            );
-        }
-        return;
-    }
-
-    // 隐藏无数据提示
-    if (noDataElement) {
-        noDataElement.style.display = 'none';
-    }
-
-    // 更新现有卡片内容并显示
-    currentPlayers.forEach((player, index) => {
-        if (index < playerCards.length) {
-            const card = playerCards[index];
-
-            // 如果卡片当前隐藏，先显示再更新内容
-            if (card.style.display === 'none') {
-                card.style.display = 'flex';
+        // 隐藏多余的卡片
+        for (let i = currentPlayers.length; i < playerCards.length; i++) {
+            const card = playerCards[i];
+            if (card && card.style.display !== 'none') {
                 card.style.opacity = '0';
-                card.style.transform = 'translateY(20px)';
+                card.style.transform = 'translateY(-10px)';
 
-                // 延迟显示动画
                 setTimeout(() => {
-                    card.style.opacity = '1';
-                    card.style.transform = 'translateY(0)';
-                }, index * 50);
+                    card.style.display = 'none';
+                }, 200);
             }
-
-            updatePlayerCard(card, player, index);
         }
-    });
-
-    // 隐藏多余的卡片
-    for (let i = currentPlayers.length; i < playerCards.length; i++) {
-        const card = playerCards[i];
-        if (card.style.display !== 'none') {
-            card.style.opacity = '0';
-            card.style.transform = 'translateY(-10px)';
-
-            setTimeout(() => {
-                card.style.display = 'none';
-            }, 200);
-        }
+    } catch (error) {
+        console.error('renderPlayerCards error:', error);
     }
 }
 
@@ -273,55 +285,73 @@ function createEmptyPlayerCard(index) {
 
 // 更新现有玩家卡片
 function updatePlayerCard(cardElement, player, index) {
-    const hp = player.hp || 0;
-    const maxHp = player.max_hp || 1;
-    const hpPercent = Math.max(0, Math.min(100, (hp / maxHp) * 100));
-    const name = player.name || `UID:${player.id}`;
-    const profession = player.profession || '未知';
+    try {
+        if (!cardElement) {
+            console.error('updatePlayerCard: cardElement is null');
+            return;
+        }
+        
+        if (!player) {
+            console.error('updatePlayerCard: player data is null');
+            return;
+        }
 
-    // 获取职业信息
-    const professionParts = profession.split('-');
-    const mainProfession = professionParts[0];
-    const subProfession = professionParts[1] || '';
-    const professionInfo = professionMap[mainProfession] || { type: '未知', color: '#9E9E9E' };
+        const hp = player.hp || 0;
+        const maxHp = player.maxHp || 1;
+        const hpPercent = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+        const name = player.name || `UID:${player.id}`;
+        const profession = player.profession || '未知';
 
-    // 确定血量状态
-    let hpClass = '';
-    if (hpPercent <= 25) hpClass = 'hp-critical';
-    else if (hpPercent <= 50) hpClass = 'hp-warning';
-    else if (hpPercent >= 99) hpClass = 'hp-full';
-    else hpClass = 'hp-healthy';
+        // 获取职业信息
+        const professionParts = profession.split('-');
+        const mainProfession = professionParts[0];
+        const subProfession = professionParts[1] || '';
+        const professionInfo = professionMap[mainProfession] || { type: '未知', color: '#9E9E9E' };
 
-    // 更新卡片类名和样式
-    cardElement.className = `player-card profession-${professionInfo.type} ${hpClass}`;
-    cardElement.style.setProperty('--profession-color', professionInfo.color);
+        // 确定血量状态
+        let hpClass = '';
+        if (hpPercent <= 25) hpClass = 'hp-critical';
+        else if (hpPercent <= 50) hpClass = 'hp-warning';
+        else if (hpPercent >= 99) hpClass = 'hp-full';
+        else hpClass = 'hp-healthy';
 
-    // 更新卡片内容
-    const playerNameEl = cardElement.querySelector('.player-name');
-    const playerProfessionEl = cardElement.querySelector('.player-profession');
-    const hpCurrentEl = cardElement.querySelector('.hp-current');
-    const hpPercentageEl = cardElement.querySelector('.hp-percentage');
-    const hpMaxEl = cardElement.querySelector('.hp-max');
-    const hpFillEl = cardElement.querySelector('.hp-fill');
-    const statValues = cardElement.querySelectorAll('.stat-value');
+        // 更新卡片类名和样式
+        cardElement.className = `player-card profession-${professionInfo.type} ${hpClass}`;
+        cardElement.style.setProperty('--profession-color', professionInfo.color);
 
-    playerNameEl.textContent = name;
-    playerNameEl.title = name;
+        // 获取DOM元素并添加详细的错误检查
+        const playerNameEl = cardElement.querySelector('.player-name');
+        const playerProfessionEl = cardElement.querySelector('.player-profession');
+        const hpCurrentEl = cardElement.querySelector('.hp-current');
+        const hpPercentageEl = cardElement.querySelector('.hp-percentage');
+        const hpMaxEl = cardElement.querySelector('.hp-max');
+        const hpFillEl = cardElement.querySelector('.hp-fill');
+        const statValues = cardElement.querySelectorAll('.stat-value');
 
-    playerProfessionEl.textContent = subProfession || professionInfo.short_name || '未知';
-    playerProfessionEl.style.backgroundColor = professionInfo.color;
+        if (playerNameEl) {
+            playerNameEl.textContent = name;
+            playerNameEl.title = name;
+        }
 
-    hpCurrentEl.textContent = hp;
-    hpPercentageEl.textContent = `${hpPercent.toFixed(0)}%`;
-    hpMaxEl.textContent = maxHp;
-    hpFillEl.style.width = `${hpPercent}%`;
+        if (playerProfessionEl) {
+            playerProfessionEl.textContent = subProfession || professionInfo.short_name || '未知';
+            playerProfessionEl.style.backgroundColor = professionInfo.color;
+        }
 
-    // 更新统计数据
-    if (statValues.length >= 3) {
-        statValues[0].textContent = formatNumber(player.total_dps || 0, 1);
-        statValues[1].textContent = formatNumber(player.total_hps || 0, 1);
-        statValues[2].textContent = formatNumber(player.total_damage?.total || 0);
-        statValues[3].textContent = formatNumber(player.total_healing?.total || 0);
+        if (hpCurrentEl) hpCurrentEl.textContent = hp;
+        if (hpPercentageEl) hpPercentageEl.textContent = `${hpPercent.toFixed(0)}%`;
+        if (hpMaxEl) hpMaxEl.textContent = maxHp;
+        if (hpFillEl) hpFillEl.style.width = `${hpPercent}%`;
+
+        // 更新统计数据
+        if (statValues.length >= 4) {
+            if (statValues[0]) statValues[0].textContent = formatNumber(player.dps || 0, 1);
+            if (statValues[1]) statValues[1].textContent = formatNumber(player.hps || 0, 1);
+            if (statValues[2]) statValues[2].textContent = formatNumber(player.totalDamage || 0);
+            if (statValues[3]) statValues[3].textContent = formatNumber(player.totalHealing || 0);
+        }
+    } catch (error) {
+        console.error('updatePlayerCard error:', error, 'player:', player, 'cardIndex:', index);
     }
 }
 
