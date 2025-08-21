@@ -1,97 +1,111 @@
-const os = require('os');
 const { exec } = require('child_process');
+const cap = require('cap');
 
-async function findDefaultNetworkDevice(devices) {
+// Filter virtual adapters
+const VIRTUAL_KEYWORDS = ['zerotier', 'vmware', 'hyper-v', 'virtual', 'loopback', 'tap', 'bluetooth', 'wan miniport'];
+
+function isVirtual(name) {
+    const lower = name.toLowerCase();
+    return VIRTUAL_KEYWORDS.some(keyword => lower.includes(keyword));
+}
+
+// Detect TCP traffic for 3 seconds
+function detectTraffic(deviceIndex, devices) {
+    return new Promise((resolve) => {
+        let count = 0;
+        try {
+            const c = new cap.Cap();
+            const buffer = Buffer.alloc(65535);
+            
+            const cleanup = () => {
+                try { c.close(); } catch (e) {}
+            };
+            
+            setTimeout(() => {
+                cleanup();
+                resolve(count);
+            }, 3000);
+            
+            if (c.open(devices[deviceIndex].name, 'ip and tcp', 1024 * 1024, buffer) === 'ETHERNET') {
+                c.setMinBytes && c.setMinBytes(0);
+                c.on('packet', () => count++);
+            } else {
+                cleanup();
+                resolve(0);
+            }
+        } catch (e) {
+            resolve(0);
+        }
+    });
+}
+
+async function findByRoute(devices) {
     try {
-        // 在Windows上使用route命令查找默认网关
         const stdout = await new Promise((resolve, reject) => {
-            const command = os.platform() === 'win32' ? 'route print 0.0.0.0' : 'route -n get default';
-            exec(command, (error, stdout) => {
+            exec('route print 0.0.0.0', (error, stdout) => {
                 if (error) reject(error);
                 else resolve(stdout);
             });
         });
 
-        let defaultInterface = null;
+        const defaultInterface = stdout
+            .split('\n')
+            .find((line) => line.trim().startsWith('0.0.0.0'))
+            ?.trim()
+            .split(/\s+/)[3];
 
-        if (os.platform() === 'win32') {
-            // Windows: 查找默认路由对应的接口IP
-            const defaultRoute = stdout
-                .split('\n')
-                .find((line) => line.trim().startsWith('0.0.0.0'));
-            
-            if (defaultRoute) {
-                const parts = defaultRoute.trim().split(/\s+/);
-                defaultInterface = parts[3]; // 网关IP对应的接口IP
-            }
-        } else {
-            // macOS/Linux: 解析route命令输出
-            const interfaceLine = stdout
-                .split('\n')
-                .find((line) => line.includes('interface:'));
-            
-            if (interfaceLine) {
-                defaultInterface = interfaceLine.split(':')[1]?.trim();
-            }
-        }
+        if (!defaultInterface) return undefined;
 
-        if (!defaultInterface) {
-            // 备用方案：使用Node.js的os.networkInterfaces()
-            const networkInterfaces = os.networkInterfaces();
-            
-            // 找到第一个有效的非内网IP接口
-            for (const [name, interfaces] of Object.entries(networkInterfaces)) {
-                if (name.toLowerCase().includes('loopback')) continue;
-                
-                const validInterface = interfaces.find(iface => 
-                    !iface.internal && 
-                    iface.family === 'IPv4' &&
-                    !iface.address.startsWith('169.254.') // 排除APIPA地址
-                );
-                
-                if (validInterface) {
-                    // 在设备列表中查找匹配的设备
-                    const targetDevice = Object.entries(devices).find(([deviceName, device]) => {
-                        return device.addresses && device.addresses.some(addr => 
-                            addr.addr === validInterface.address
-                        );
-                    });
-                    
-                    if (targetDevice) {
-                        return targetDevice[0];
-                    }
-                }
-            }
-            
-            return undefined;
-        }
+        const targetInterface = Object.entries(devices).find(([, device]) =>
+            device.addresses.find((address) => address.addr === defaultInterface),
+        )?.[0];
 
-        // 在设备列表中查找匹配默认接口IP的设备
-        const targetInterface = Object.entries(devices).find(([deviceName, device]) => {
-            return device.addresses && device.addresses.some(address => 
-                address.addr === defaultInterface
-            );
-        })?.[0];
-
-        return targetInterface;
+        return parseInt(targetInterface);
     } catch (error) {
-        console.warn('自动检测网络设备失败:', error.message);
+        return undefined;
+    }
+}
+
+async function findDefaultNetworkDevice(devices) {
+    try {
+        // Get physical adapters
+        const physical = Object.entries(devices).filter(([, device]) => {
+            const name = device.description || device.name || '';
+            return !isVirtual(name) && device.addresses && device.addresses.length > 0;
+        });
         
-        // 最后的备用方案：选择第一个有活动IP地址的设备
-        try {
-            const deviceWithIP = Object.entries(devices).find(([deviceName, device]) => {
-                return device.addresses && device.addresses.length > 0 && 
-                       device.addresses.some(addr => 
-                           addr.addr && 
-                           !addr.addr.startsWith('127.') && // 排除localhost
-                           !addr.addr.startsWith('169.254.') // 排除APIPA
-                       );
-            });
-            
-            return deviceWithIP ? deviceWithIP[0] : undefined;
-        } catch (fallbackError) {
-            return undefined;
+        if (physical.length === 0) {
+            return await findByRoute(devices);
         }
+        
+        // Detect traffic on physical adapters
+        console.log('Detecting network traffic... (3s)');
+        const results = await Promise.all(
+            physical.map(async ([index]) => ({
+                index: parseInt(index),
+                packets: await detectTraffic(parseInt(index), devices)
+            }))
+        );
+        
+        // Select adapter with most traffic
+        const best = results.filter(r => r.packets > 0).sort((a, b) => b.packets - a.packets)[0];
+        
+        if (best) {
+            console.log(`Using adapter with most traffic: ${best.index} - ${devices[best.index].description} (${best.packets} packets)`);
+            return best.index;
+        }
+        
+        // Fallback to route table
+        const routeIndex = await findByRoute(devices);
+        if (routeIndex !== undefined && devices[routeIndex] && isVirtual(devices[routeIndex].description || '')) {
+            console.log('Route table selected virtual adapter, using first physical adapter instead');
+            return parseInt(physical[0][0]);
+        }
+        
+        return routeIndex;
+        
+    } catch (error) {
+        return undefined;
     }
 }
 

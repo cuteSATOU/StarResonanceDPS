@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>星痕共鸣实时战斗数据</title>
+    <script src="./echarts.min.js"></script>
+    <link rel="stylesheet" href="./css/star.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- 顶部导航栏 -->
+        <nav class="navbar">
+            <div class="navbar-content">
+                <div class="app-title">
+                    <span class="app-title-icon">🎯</span>
+                    <div>
+                        星痕共鸣实时战斗数据
+                        <div class="app-subtitle">主程序版本: V1.0.0 | 内核版本: V2.8.1</div>
+                    </div>
+                </div>
+
+                <!-- 抓包状态显示 -->
+                <div class="capture-status" id="captureStatus">
+                    <div class="capture-status-icon">
+                        <span class="status-dot" id="captureStatusDot"></span>
+                        <span class="capture-icon">📡</span>
+                    </div>
+                    <div class="capture-status-text">
+                        <div class="capture-status-label">抓包状态</div>
+                        <div class="capture-status-value" id="captureStatusText">未开始</div>
+                    </div>
+                </div>
+
+                <!-- 窗口控制按钮 -->
+                <div class="window-controls">
+                    <button class="window-control-btn minimize-btn" id="minimizeBtn" title="最小化">
+                        <svg width="12" height="12" viewBox="0 0 12 12">
+                            <rect x="2" y="5" width="8" height="1.5" fill="currentColor" rx="0.75" />
+                        </svg>
+                    </button>
+                    <button class="window-control-btn maximize-btn" id="maximizeBtn" title="最大化">
+                        <svg width="12" height="12" viewBox="0 0 12 12">
+                            <rect x="2" y="2" width="8" height="8" stroke="currentColor" stroke-width="1.5" fill="none"
+                                rx="1" />
+                        </svg>
+                    </button>
+                    <button class="window-control-btn close-btn" id="closeBtn" title="关闭">
+                        <svg width="12" height="12" viewBox="0 0 12 12">
+                            <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.5"
+                                stroke-linecap="round" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 主要内容区域 -->
+        <main class="main-content">
+            <!-- 操作按钮面板 -->
+            <div class="action-panel">
+                <!-- 网络设备配置区域 -->
+                <div class="device-config-section">
+                    <div class="config-row">
+                        <div class="config-group">
+                            <label class="config-label" for="deviceSelect">
+                                <span class="config-icon">📡</span>
+                                网卡设备
+                            </label>
+                            <select id="deviceSelect" class="config-select">
+                                <option value="auto">🔍 自动检测默认网卡设备</option>
+                                <!-- 设备列表将通过 JavaScript 动态填充 -->
+                            </select>
+                        </div>
+                        <div class="config-group">
+                            <label class="config-label">
+                                <span class="config-icon">📋</span>
+                                日志级别
+                            </label>
+                            <div class="log-level-options">
+                                <label class="log-level-option">
+                                    <input type="radio" name="logLevel" value="info" checked>
+                                    <span class="log-level-text">Info</span>
+                                </label>
+                                <label class="log-level-option">
+                                    <input type="radio" name="logLevel" value="debug">
+                                    <span class="log-level-text">Debug</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-primary" id="startCaptureButton" onclick="startCapture()">
+                        <span class="btn-icon">🎯</span>
+                        开始抓包
+                    </button>
+                    <button class="btn btn-success" onclick="clearData()">
+                        <span class="btn-icon">✨</span>
+                        清空数据
+                    </button>
+                    <button class="btn btn-warning" id="pauseButton" onclick="togglePause()">
+                        <span class="btn-icon">⏸️</span>
+                        暂停统计
+                    </button>
+                    <button class="btn btn-info" onclick="toggleDarkMode()">
+                        <span class="btn-icon">🌙</span>
+                        夜间模式
+                    </button>
+                    <button class="btn btn-secondary" onclick="toggleSimpleMode()">
+                        <span class="btn-icon">📋</span>
+                        简洁模式
+                    </button>
+                    <button class="btn btn-outline" onclick="toggleControlsModal()">
+                        <span class="btn-icon">⚙️</span>
+                        用户设置
+                    </button>
+                    <button class="btn btn-special" onclick="openHpWindow()">
+                        <span class="btn-icon">❤️</span>
+                        <span>血条监控</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 控制面板弹窗 -->
+            <div id="controlsModal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <span>⚙️ 用户控制面板</span>
+                        <button class="close-button" onclick="toggleControlsModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="modal-buttons">
+                            <button class="btn btn-info" onclick="toggleAllUsers()">
+                                <span class="btn-icon">🔄</span>
+                                全选/取消全选
+                            </button>
+                            <button class="btn btn-danger" onclick="clearNicknames()">
+                                <span class="btn-icon">🗑️</span>
+                                清空昵称
+                            </button>
+                        </div>
+                        <div id="userControlsList"
+                            style="display: flex; flex-wrap: wrap; gap: var(--spacing-md); max-height: 400px; overflow-y: auto; padding: var(--spacing-sm);">
+                            <!-- 用户控制项将在这里动态生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
+
+            <!-- 服务器状态提示 -->
+            <div id="serverStatus" class="server-status">
+                <span id="serverStatusText">连接中...</span>
+            </div>
+
+            <!-- DPS趋势图表 -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <span class="card-title-icon">📈</span>
+                        DPS趋势分析
+                    </h3>
+                    <div style="display: flex; align-items: center; gap: var(--spacing-md);">
+                        <span id="chartStatus" class="status-indicator"></span>
+                        <button class="btn btn-outline" id="chartToggleBtn" onclick="toggleChartVisibility()">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="6,10 8,8 10,10"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="dpsChartContent" style="transition: all var(--transition-slow); overflow: hidden;">
+                    <div id="dpsChart" style="width: 100%; height: 350px"></div>
+                </div>
+            </div>
+
+            <!-- 数据表格区域 -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <span class="card-title-icon">📊</span>
+                        实时战斗数据
+                    </h3>
+                    <div class="controls-group">
+                        <label for="sortSelect" style="font-weight: 600; color: var(--text-secondary);">排序方式:</label>
+                        <select id="sortSelect" onchange="updateSortMode()" class="modern-select">
+                            <option value="uid">按UID排序 (升序)</option>
+                            <option value="fightPoint">按评分排序 (降序)</option>
+                            <option value="takenDamage">按承伤排序 (降序)</option>
+                            <option value="damage">按总伤害排序 (降序)</option>
+                            <option value="dps">按总DPS排序 (降序)</option>
+                            <option value="realtimeDpsMax">按最大瞬时DPS排序 (降序)</option>
+                            <option value="healing">按总治疗排序 (降序)</option>
+                            <option value="hps">按总HPS排序 (降序)</option>
+                            <option value="realtimeHpsMax">按最大瞬时HPS排序 (降序)</option>
+                            <option value="hp_min">按剩余HP排序 (升序)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 数据组显示控制 -->
+                <div class="data-group-controls">
+                    <button id="damageGroupBtn" class="btn btn-info active" onclick="toggleDataGroup('damage')">
+                        <span class="btn-icon">⚔️</span>
+                        伤害&DPS
+                    </button>
+                    <button id="healingGroupBtn" class="btn btn-success" onclick="toggleDataGroup('healing')">
+                        <span class="btn-icon">❤️</span>
+                        治疗&HPS
+                    </button>
+                    <button id="allGroupBtn" class="btn btn-primary" onclick="toggleDataGroup('all')">
+                        <span class="btn-icon">📊</span>
+                        全部数据
+                    </button>
+                    <button id="hideInactiveBtn" class="btn btn-outline" onclick="toggleHideInactiveUsers()">
+                        <span class="btn-icon">👀</span>
+                        隐藏未参战
+                    </button>
+                    <button class="btn btn-outline" onclick="openColumnSettings()">
+                        <span class="btn-icon">⚙️</span>
+                        表格设置
+                    </button>
+                </div>
+                <div class="table-container">
+                    <table id="damageTable">
+                        <thead>
+                            <tr>
+                                <th rowspan="2" title="角色唯一标识符">角色ID</th>
+                                <th rowspan="2" title="角色昵称/自定义昵称">角色昵称</th>
+                                <th rowspan="2" title="角色职业">职业</th>
+                                <th rowspan="2" title="角色评分">评分</th>
+                                <th rowspan="2" title="角色血量">HP</th>
+                                <th rowspan="2" title="角色在战斗中受到的伤害">承伤</th>
+                                <th rowspan="2" title="角色在战斗中的暴击伤害次数占总伤害次数的比例">暴击率</th>
+                                <th rowspan="2" title="角色在战斗中的幸运伤害次数占总伤害次数的比例">幸运率</th>
+                                <th class="damage-main-col" colspan="4">伤害</th>
+                                <th class="damage-simple-col" style="display: none" colspan="1">伤害</th>
+                                <th class="dps-col" colspan="3">DPS</th>
+                                <th class="healing-main-col" colspan="4">治疗</th>
+                                <th class="healing-simple-col" style="display: none" colspan="1">治疗</th>
+                                <th class="hps-col" colspan="3">HPS</th>
+                                <th rowspan="2">操作</th>
+                            </tr>
+                            <tr>
+                                <th class="damage-cols" title="角色在战斗中造成的总伤害">总伤害</th>
+                                <th class="damage-detail-cols" title="角色在战斗中造成的非幸运的暴击伤害">纯暴击</th>
+                                <th class="damage-detail-cols" title="角色在战斗中造成的非暴击的幸运伤害">纯幸运</th>
+                                <th class="damage-detail-cols" title="角色在战斗中造成的暴击的幸运伤害">暴击幸运</th>
+                                <th class="dps-cols" title="角色在战斗中的最近一秒造成的伤害">瞬时DPS</th>
+                                <th class="dps-cols" title="角色在战斗中的最大瞬时DPS">最大瞬时</th>
+                                <th class="dps-cols" title="角色在战斗中的总DPS（以第一次技能与最后一次技能之间的时间作为有效战斗时间计算）">总DPS</th>
+                                <th class="healing-cols" title="角色在战斗中造成的总治疗量">总治疗</th>
+                                <th class="healing-detail-cols" title="角色在战斗中造成的非幸运的暴击治疗量">纯暴击</th>
+                                <th class="healing-detail-cols" title="角色在战斗中造成的非暴击的幸运治疗量">纯幸运</th>
+                                <th class="healing-detail-cols" title="角色在战斗中造成的暴击的幸运治疗量">暴击幸运</th>
+                                <th class="hps-cols" title="角色在战斗中的最近一秒造成的伤害和治疗量">瞬时HPS</th>
+                                <th class="hps-cols" title="角色在战斗中的最大瞬时HPS">最大瞬时</th>
+                                <th class="hps-cols" title="角色在战斗中的总HPS（以第一次技能与最后一次技能之间的时间作为有效战斗时间计算）">总HPS</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+    </div>
+    </div>
+
+    <!-- 底部信息 -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-info">
+                <span>© 2025 Made with ❤️ by </span>
+                <a href="https://github.com/dmlgzs/" target="_blank" class="footer-link">Dimole</a>
+                <span> and </span>
+                <a href="https://github.com/dmlgzs/StarResonanceDamageCounter/graphs/contributors" target="_blank"
+                    class="footer-link">Other Contributors</a>
+            </div>
+            <div class="footer-links">
+                <a href="https://github.com/dmlgzs/StarResonanceDamageCounter" target="_blank" class="footer-link">
+                    <span class="btn-icon">📖</span>
+                    GitHub
+                </a>
+            </div>
+        </div>
+    </footer>
+    </main>
+    </div>
+
+    <script src="./star.js"></script>
+    <script>
+        function updateTableStickyHeader() {
+            const damageTable = document.getElementById('damageTable');
+            const damageTableRows = damageTable.querySelectorAll('tr');
+            damageTableRows.forEach((row) => {
+                const top = row.offsetTop;
+                row.style.setProperty('--th-top', `${top}px`);
+            });
+        }
+        window.addEventListener('resize', updateTableStickyHeader);
+        document.addEventListener('DOMContentLoaded', updateTableStickyHeader);
+    </script>
+
+    <!-- 列设置弹窗 -->
+    <div id="columnSettingsModal" class="column-settings-modal">
+        <div class="column-settings-content">
+            <div class="column-settings-header">
+                <div class="column-settings-title">⚙️ 表格设置</div>
+                <button class="close-btn" onclick="closeColumnSettings()">&times;</button>
+            </div>
+
+            <!-- 内容将通过 JavaScript 动态生成 -->
+        </div>
+    </div>
+</body>
+
+</html>

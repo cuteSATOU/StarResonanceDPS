@@ -149,7 +149,7 @@ npm run dev
 
 ## 致谢
 
-- 感谢 [Dimole](https://github.com/dmlgzs) 的原始服务器版本
+- 感谢 [Dimole](https://github.com/dmlgzs) 的原始版本
 
 ---
 
