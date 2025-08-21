@@ -115,7 +115,7 @@ class ElectronDamageCounter {
                 contextIsolation: true,
                 preload: path.join(__dirname, 'preload.js')
             },
-            icon: path.join(__dirname, 'assets', 'icon.png'), // 可选：应用图标
+            icon: path.join(__dirname, 'assets', 'icon.ico'), // 可选：应用图标
             show: false // 先不显示，等加载完成再显示
         });
 
@@ -186,7 +186,7 @@ class ElectronDamageCounter {
             },
             show: false,
             title: '技能分析',
-            icon: path.join(__dirname, 'assets', 'icon.png')
+            icon: path.join(__dirname, 'assets', 'icon.ico')
         });
 
         // 加载技能分析页面
@@ -227,7 +227,7 @@ class ElectronDamageCounter {
             },
             show: false,
             title: '血条监控',
-            icon: path.join(__dirname, 'assets', 'icon.png')
+            icon: path.join(__dirname, 'assets', 'icon.ico')
         };
         
         // 如果有保存的位置，则恢复位置
