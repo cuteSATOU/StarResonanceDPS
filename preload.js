@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 获取应用版本号
     getAppVersion: () => ipcRenderer.invoke('get-app-version'),
     
+    // 在系统默认浏览器中打开链接
+    openExternal: (url) => ipcRenderer.invoke('open-external', url),
+    
     // 监听主进程发送的事件
     onDataUpdate: (callback) => {
         ipcRenderer.on('data-update', (event, data) => callback(data));

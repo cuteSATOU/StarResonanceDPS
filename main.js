@@ -536,6 +536,18 @@ class ElectronDamageCounter {
                 return { code: 1, msg: `获取版本号失败: ${error.message}` };
             }
         });
+        
+        // 在系统默认浏览器中打开链接
+        ipcMain.handle('open-external', async (event, url) => {
+            try {
+                const { shell } = require('electron');
+                await shell.openExternal(url);
+                return { code: 0, msg: '链接已在默认浏览器中打开' };
+            } catch (error) {
+                this.logger.error('打开外部链接失败:', error);
+                return { code: 1, msg: `打开外部链接失败: ${error.message}` };
+            }
+        });
 
 
     }

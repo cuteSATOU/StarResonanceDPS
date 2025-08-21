@@ -2809,7 +2809,7 @@ function showUpdateActions(releaseUrl) {
 
 // 打开下载页面
 function openDownloadPage(url) {
-    window.open(url, '_blank');
+    openExternalLink(url);
     closeUpdateModal();
 }
 
@@ -2890,6 +2890,25 @@ async function silentCheckForUpdates() {
         }
     } catch (error) {
         console.error('静默检查更新失败:', error);
+    }
+}
+
+// 在系统默认浏览器中打开外部链接
+async function openExternalLink(url) {
+    try {
+        if (window.electronAPI && window.electronAPI.openExternal) {
+            const result = await window.electronAPI.openExternal(url);
+            if (result.code !== 0) {
+                console.error('打开外部链接失败:', result.msg);
+            }
+        } else {
+            // 降级处理：如果electronAPI不可用，使用传统方式
+            window.open(url, '_blank');
+        }
+    } catch (error) {
+        console.error('打开外部链接失败:', error);
+        // 降级处理
+        window.open(url, '_blank');
     }
 }
 
