@@ -330,7 +330,7 @@ class UserData {
 
     /** 获取技能统计数据 */
     getSkillSummary() {
-        const skillConfig = require('../skill_names.json').skill_names;
+        const skillConfig = require('../tables/skill_names.json').skill_names;
         const skills = {};
         for (const [skillId, stat] of this.skillUsage) {
             const total = stat.stats.normal + stat.stats.critical + stat.stats.lucky + stat.stats.crit_lucky;
@@ -420,6 +420,7 @@ class UserDataManager {
         this.pendingSave = false;
 
         this.hpCache = new Map(); // 这个经常变化的就不存盘了
+        this.startTime = Date.now();
     }
 
     /** 加载用户缓存 */
@@ -666,6 +667,7 @@ class UserDataManager {
     /** 清除所有用户数据 */
     clearAll() {
         this.users.clear();
+        this.startTime = Date.now();
     }
 
     /** 获取用户列表 */
