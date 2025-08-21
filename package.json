@@ -38,16 +38,20 @@
     "@electron/fuses": "^2.0.0",
     "@electron/rebuild": "^4.0.1",
     "electron": "^37.3.0",
+    "electron-builder": "^26.0.12",
     "electron-rebuild": "^3.2.9"
   },
   "build": {
-    "appId": "com.satou.stardps",
-    "productName": "星痕共鸣DPS统计工具",
+    "appId": "com.satou.star-resonance-dps",
+    "productName": "星痕共鸣第三方DPS统计工具",
+    "asar": true,
     "directories": {
       "output": "dist"
     },
     "files": [
       "main.js",
+      "preload.js",
+      "skill_names.json",
       "algo/**/*",
       "node_modules/**/*",
       "assets/**/*",
@@ -56,8 +60,15 @@
     ],
     "win": {
       "icon": "assets/icon.ico",
-      "target": "nsis",
-      "requestedExecutionLevel": "requireAdministrator"
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-ver${version}.exe"
     },
     "mac": {
       "icon": "assets/icon.icns",
