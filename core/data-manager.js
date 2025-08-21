@@ -419,7 +419,7 @@ class UserDataManager {
         this.saveThrottleTimer = null;
         this.pendingSave = false;
 
-        this.maxHpCache = new Map(); // 这个经常变化的就不存盘了
+        this.hpCache = new Map(); // 这个经常变化的就不存盘了
     }
 
     /** 加载用户缓存 */
@@ -495,9 +495,12 @@ class UserDataManager {
                 if (cachedData.fightPoint !== undefined && cachedData.fightPoint !== null) {
                     user.setFightPoint(cachedData.fightPoint);
                 }
+                if (cachedData.maxHp !== undefined && cachedData.maxHp !== null) {
+                    user.setAttrKV('max_hp', cachedData.maxHp);
+                }
             }
-            if (this.maxHpCache.has(uid)) {
-                user.setAttrKV('max_hp', this.maxHpCache.get(uid));
+            if (this.hpCache.has(uid)) {
+                user.setAttrKV('hp', this.hpCache.get(uid));
             }
 
             this.users.set(uid, user);
@@ -617,6 +620,16 @@ class UserDataManager {
 
         if (key === 'max_hp') {
             this.maxHpCache.set(uid, value);
+            // 更新缓存
+            const uidStr = String(uid);
+            if (!this.userCache.has(uidStr)) {
+                this.userCache.set(uidStr, {});
+            }
+            this.userCache.get(uidStr).maxHp = value;
+            this.saveUserCacheThrottled();
+        }
+        if (key === 'hp') {
+            this.hpCache.set(uid, value);
         }
     }
 
