@@ -17,7 +17,7 @@
                     <span class="app-title-icon">🎯</span>
                     <div>
                         星痕共鸣实时战斗数据
-                        <div class="app-subtitle">主程序版本: V1.0.0 | 内核版本: V2.8.1</div>
+                        <div class="app-subtitle">主程序版本: <span id="appVersion"></span> | 内核版本: V2.8.1</div>
                     </div>
                 </div>
 
@@ -121,6 +121,10 @@
                         <span class="btn-icon">❤️</span>
                         <span>血条监控</span>
                     </button>
+                    <button class="btn btn-outline" onclick="checkForUpdates()">
+                        <span class="btn-icon">🔄</span>
+                        检查更新
+                    </button>
                 </div>
             </div>
 
@@ -150,7 +154,23 @@
                 </div>
             </div>
 
-
+            <!-- 检查更新弹窗 -->
+            <div id="updateModal" class="modal">
+                <div class="modal-content update-modal-content">
+                    <div class="modal-header">
+                        <span id="updateModalTitle">🔄 检查更新</span>
+                        <button class="close-button" onclick="closeUpdateModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="updateModalBody">
+                            <!-- 更新内容将在这里动态生成 -->
+                        </div>
+                        <div id="updateModalActions" class="modal-actions" style="display: none;">
+                            <!-- 操作按钮将在这里动态生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- 服务器状态提示 -->
             <div id="serverStatus" class="server-status">

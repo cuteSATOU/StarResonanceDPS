@@ -316,31 +316,6 @@ function updateCaptureStatus(status, message, deviceName = '') {
     }, 100);
 }
 
-// 服务器状态提示管理（保留浮动提示功能）
-function showServerStatus(status, message, autoHide = true) {
-    const statusElement = document.getElementById('serverStatus');
-    const textElement = document.getElementById('serverStatusText');
-
-    if (!statusElement || !textElement) return;
-
-    // 清除之前的自动隐藏定时器
-    if (serverStatusTimeout) {
-        clearTimeout(serverStatusTimeout);
-        serverStatusTimeout = null;
-    }
-
-    // 更新状态样式
-    statusElement.className = 'server-status show ' + status;
-    textElement.textContent = message;
-
-    // 自动隐藏（连接成功状态3秒后隐藏，其他状态不自动隐藏）
-    if (autoHide && status === 'connected') {
-        serverStatusTimeout = setTimeout(() => {
-            hideServerStatus();
-        }, 3000);
-    }
-}
-
 function hideServerStatus() {
     const statusElement = document.getElementById('serverStatus');
     if (statusElement) {
@@ -2517,6 +2492,12 @@ function initialize() {
     // 初始化时获取一次数据
     fetchData();
 
+    // 动态获取并设置版本号
+    initAppVersion();
+
+    // 应用启动时自动静默检查更新
+    silentCheckForUpdates();
+
     // 添加事件委托处理技能按钮点击
     const damageTable = document.getElementById('damageTable');
     if (damageTable) {
@@ -2706,6 +2687,212 @@ function updateMaximizeButton(isMaximized) {
 }
 
 // 等待DOM加载完成后初始化
+// 检查更新功能
+async function checkForUpdates() {
+    try {
+        // 显示更新弹窗并设置检查中状态
+        showUpdateModal();
+        setUpdateStatus('checking', '正在检查更新...', '🔄');
+        
+        const result = await window.electronAPI.checkForUpdates();
+        
+        if (result.code === 0) {
+            if (result.hasUpdate) {
+                // 有更新可用
+                setUpdateStatus('available', `发现新版本 v${result.latestVersion}！`, '🎉');
+                showUpdateInfo(result);
+                showUpdateActions(result.releaseUrl);
+            } else {
+                // 已是最新版本
+                setUpdateStatus('latest', `当前已是最新版本 v${result.currentVersion}`, '✅');
+                showUpdateInfo(result);
+            }
+        } else {
+            // 检查失败
+            setUpdateStatus('error', result.msg || '检查更新失败', '❌');
+        }
+    } catch (error) {
+        console.error('检查更新出错:', error);
+        setUpdateStatus('error', '检查更新时发生错误', '❌');
+    }
+}
+
+// 显示更新弹窗
+function showUpdateModal() {
+    const modal = document.getElementById('updateModal');
+    modal.classList.add('show');
+    modal.style.display = 'flex';
+}
+
+// 关闭更新弹窗
+function closeUpdateModal() {
+    const modal = document.getElementById('updateModal');
+    modal.classList.remove('show');
+    modal.style.display = 'none';
+    
+    // 清空内容
+    document.getElementById('updateModalBody').innerHTML = '';
+    document.getElementById('updateModalActions').style.display = 'none';
+    document.getElementById('updateModalActions').innerHTML = '';
+}
+
+// 设置更新状态
+function setUpdateStatus(type, message, icon) {
+    const modalBody = document.getElementById('updateModalBody');
+    
+    const statusHtml = `
+        <div class="update-status ${type}">
+            <span class="update-status-icon">${icon}</span>
+            <span>${message}</span>
+        </div>
+    `;
+    
+    modalBody.innerHTML = statusHtml;
+}
+
+// 显示更新信息
+function showUpdateInfo(result) {
+    const modalBody = document.getElementById('updateModalBody');
+    
+    let infoHtml = `
+        <div class="update-info">
+            <div class="update-info-row">
+                <span class="update-info-label">当前版本</span>
+                <span class="update-info-value">v${result.currentVersion}</span>
+            </div>
+            <div class="update-info-row">
+                <span class="update-info-label">最新版本</span>
+                <span class="update-info-value">v${result.latestVersion}</span>
+            </div>
+    `;
+    
+    if (result.publishedAt) {
+        infoHtml += `
+            <div class="update-info-row">
+                <span class="update-info-label">发布时间</span>
+                <span class="update-info-value">${new Date(result.publishedAt).toLocaleString()}</span>
+            </div>
+        `;
+    }
+    
+    infoHtml += `</div>`;
+    
+    if (result.releaseNotes && result.releaseNotes.trim() !== '暂无更新说明') {
+        infoHtml += `
+            <div style="margin-top: var(--spacing-lg);">
+                <h4 style="margin-bottom: var(--spacing-md); color: var(--text-secondary);">📝 更新说明</h4>
+                <div class="update-notes">${formatReleaseNotes(result.releaseNotes)}</div>
+            </div>
+        `;
+    }
+    
+    modalBody.innerHTML += infoHtml;
+}
+
+// 显示更新操作按钮
+function showUpdateActions(releaseUrl) {
+    const actionsDiv = document.getElementById('updateModalActions');
+    
+    actionsDiv.innerHTML = `
+        <button class="btn btn-outline" onclick="closeUpdateModal()">
+            <span class="btn-icon">❌</span>
+            稍后更新
+        </button>
+        <button class="btn btn-primary" onclick="openDownloadPage('${releaseUrl}')">
+            <span class="btn-icon">📥</span>
+            立即下载
+        </button>
+    `;
+    
+    actionsDiv.style.display = 'flex';
+}
+
+// 打开下载页面
+function openDownloadPage(url) {
+    window.open(url, '_blank');
+    closeUpdateModal();
+}
+
+// 格式化更新说明
+function formatReleaseNotes(notes) {
+    if (!notes || notes.trim() === '') {
+        return '暂无更新说明';
+    }
+    
+    // 简单的Markdown到HTML转换
+    let formatted = notes
+        // 转义HTML特殊字符
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        // 处理标题
+        .replace(/^### (.+)$/gm, '<h6>$1</h6>')
+        .replace(/^## (.+)$/gm, '<h5>$1</h5>')
+        .replace(/^# (.+)$/gm, '<h4>$1</h4>')
+        // 处理粗体
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        // 处理斜体
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // 处理代码
+        .replace(/`(.+?)`/g, '<code>$1</code>')
+        // 处理链接
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+        // 处理无序列表
+        .replace(/^[\s]*[-*+] (.+)$/gm, '<li>$1</li>')
+        // 处理有序列表
+        .replace(/^[\s]*\d+\. (.+)$/gm, '<li>$1</li>')
+        // 处理换行
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>');
+    
+    // 包装列表项
+    formatted = formatted.replace(/(<li>.*?<\/li>)/gs, (match) => {
+        return '<ul>' + match + '</ul>';
+    });
+    
+    // 包装段落
+    if (!formatted.includes('<h') && !formatted.includes('<ul>')) {
+        formatted = '<p>' + formatted + '</p>';
+    }
+    
+    return formatted;
+}
+
+// 动态获取并设置应用版本号
+async function initAppVersion() {
+    try {
+        if (window.electronAPI && window.electronAPI.getAppVersion) {
+            const result = await window.electronAPI.getAppVersion();
+            if (result.code === 0) {
+                const versionElement = document.getElementById('appVersion');
+                if (versionElement) {
+                    versionElement.textContent = `V${result.version}`;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('获取应用版本号失败:', error);
+    }
+}
+
+// 静默检查更新（仅在有新版本时弹窗）
+async function silentCheckForUpdates() {
+    try {
+        if (window.electronAPI && window.electronAPI.checkForUpdates) {
+            const result = await window.electronAPI.checkForUpdates();
+            if (result.code === 0 && result.hasUpdate) {
+                // 只有在有新版本时才显示弹窗
+                showUpdateModal();
+                setUpdateStatus('available', '发现新版本！', '🎉');
+                showUpdateInfo(result);
+                showUpdateActions(result.releaseUrl);
+            }
+        }
+    } catch (error) {
+        console.error('静默检查更新失败:', error);
+    }
+}
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialize);
 } else {

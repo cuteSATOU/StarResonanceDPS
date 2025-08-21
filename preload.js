@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         return ipcRenderer.invoke('get-data');
     },
     
+    // 检查更新
+    checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+    
+    // 获取应用版本号
+    getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+    
     // 监听主进程发送的事件
     onDataUpdate: (callback) => {
         ipcRenderer.on('data-update', (event, data) => callback(data));

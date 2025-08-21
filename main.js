@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const readline = require('readline');
 const winston = require('winston');
+const https = require('https');
 const { UserDataManager } = require('./core/data-manager');
 const PacketCapture = require('./core/packet-capture');
 
@@ -24,6 +25,70 @@ class ElectronDamageCounter {
         
         // 悬浮窗位置记忆
         this.hpWindowPosition = { x: undefined, y: undefined };
+    }
+
+    // 获取GitHub最新发布版本
+    async getLatestRelease() {
+        return new Promise((resolve, reject) => {
+            const options = {
+                hostname: 'api.github.com',
+                path: '/repos/cuteSATOU/StarResonanceDPS/releases/latest',
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'StarResonanceDPS-UpdateChecker'
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let data = '';
+                
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                
+                res.on('end', () => {
+                    try {
+                        if (res.statusCode === 200) {
+                            const release = JSON.parse(data);
+                            resolve(release);
+                        } else {
+                            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                        }
+                    } catch (error) {
+                        reject(new Error(`解析响应失败: ${error.message}`));
+                    }
+                });
+            });
+            
+            req.on('error', (error) => {
+                reject(new Error(`请求失败: ${error.message}`));
+            });
+            
+            req.setTimeout(10000, () => {
+                req.destroy();
+                reject(new Error('请求超时'));
+            });
+            
+            req.end();
+        });
+    }
+
+    // 比较版本号
+    compareVersions(version1, version2) {
+        const v1Parts = version1.split('.').map(Number);
+        const v2Parts = version2.split('.').map(Number);
+        
+        const maxLength = Math.max(v1Parts.length, v2Parts.length);
+        
+        for (let i = 0; i < maxLength; i++) {
+            const v1Part = v1Parts[i] || 0;
+            const v2Part = v2Parts[i] || 0;
+            
+            if (v1Part < v2Part) return -1;
+            if (v1Part > v2Part) return 1;
+        }
+        
+        return 0;
     }
 
     createLogger(logLevel = 'info') {
@@ -431,6 +496,45 @@ class ElectronDamageCounter {
                 return alwaysOnTop;
             }
             return false;
+        });
+
+        // 检查更新
+        ipcMain.handle('check-for-updates', async () => {
+            try {
+                const currentVersion = require('./package.json').version;
+                const latestRelease = await this.getLatestRelease();
+                
+                if (!latestRelease) {
+                    return { code: 1, msg: '无法获取最新版本信息' };
+                }
+                
+                const latestVersion = latestRelease.tag_name.replace(/^v/, '');
+                const hasUpdate = this.compareVersions(currentVersion, latestVersion) < 0;
+                
+                return {
+                    code: 0,
+                    currentVersion,
+                    latestVersion,
+                    hasUpdate,
+                    releaseUrl: latestRelease.html_url,
+                    releaseNotes: latestRelease.body || '暂无更新说明',
+                    publishedAt: latestRelease.published_at
+                };
+            } catch (error) {
+                this.logger.error('检查更新失败:', error);
+                return { code: 1, msg: `检查更新失败: ${error.message}` };
+            }
+        });
+        
+        // 获取应用版本号
+        ipcMain.handle('get-app-version', () => {
+            try {
+                const version = require('./package.json').version;
+                return { code: 0, version };
+            } catch (error) {
+                this.logger.error('获取版本号失败:', error);
+                return { code: 1, msg: `获取版本号失败: ${error.message}` };
+            }
         });
 
 
